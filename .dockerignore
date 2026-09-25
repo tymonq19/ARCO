@@ -1,0 +1,45 @@
+# The server image only needs packages/arco_core and server/.
+# Everything else (the Flutter app, tooling, build output) is excluded so the
+# build context stays small and code changes do not bust the cache.
+
+.git/
+.github/
+.idea/
+.vscode/
+.dart_tool/
+**/.dart_tool/
+**/build/
+**/.DS_Store
+*.iml
+.metadata
+.flutter-plugins
+.flutter-plugins-dependencies
+
+# Flutter application (not part of the server image)
+android/
+assets/
+ios/
+linux/
+macos/
+windows/
+web/
+lib/
+test/
+tool/
+pubspec.yaml
+pubspec.lock
+analysis_options.yaml
+arco.iml
+
+# Docs and local data
+README.md
+README.server.md
+SPEC.md
+server/data/
+**/*.db
+**/*.db-shm
+**/*.db-wal
+
+# The server's own pubspec files are required by the build.
+!server/pubspec.yaml
+!server/pubspec.lock

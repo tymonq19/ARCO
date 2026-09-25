@@ -1,0 +1,8 @@
+#include? "Pods/Target Support Files/Pods-Runner/Pods-Runner.release.xcconfig"
+#include "Generated.xcconfig"
+
+// Rewarded ads (SPEC §4.10). `google_mobile_ads`' public headers import a Mobile
+// Ads SDK header the SDK ships as private, so the module Runner precompiles for
+// the plugin registrant does not verify without this. See ios/Podfile, which sets
+// the same flag for the pods, and SETUP.md §10.
+CLANG_ALLOW_NON_MODULAR_INCLUDES_IN_FRAMEWORK_MODULES=YES

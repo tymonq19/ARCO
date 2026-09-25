@@ -1,0 +1,35 @@
+name: arco_server
+description: Arco game server - duel rooms over WebSocket and the verified global leaderboard.
+version: 1.0.0
+publish_to: none
+
+environment:
+  sdk: ^3.11.0
+
+dependencies:
+  arco_core:
+    path: ../packages/arco_core
+  crypto: ^3.0.7
+  pointycastle: ^4.0.0
+  shelf: ^1.4.2
+  shelf_router: ^1.1.4
+  shelf_web_socket: ^3.0.0
+  sqlite3: ^3.6.0
+  # Needed to hand the WebSocket upgrade a channel over the frame-size guarded
+  # socket (see lib/src/ws_frame_guard.dart); shelf_io builds the same channel.
+  stream_channel: ^2.1.2
+  web_socket_channel: ^3.0.3
+
+dev_dependencies:
+  http: ^1.6.0
+  lints: ^6.0.0
+  test: ^1.26.0
+
+# Use the SQLite shared library provided by the operating system
+# (/usr/lib/libsqlite3.dylib on macOS, libsqlite3.so from libsqlite3-0 on
+# Debian, see the Dockerfile) instead of downloading a prebuilt binary at
+# build time.
+hooks:
+  user_defines:
+    sqlite3:
+      source: system

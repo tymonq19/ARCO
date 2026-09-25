@@ -1,0 +1,67 @@
+# Uncomment this line to define a global platform for your project
+# platform :ios, '13.0'
+
+# CocoaPods analytics sends network stats synchronously affecting flutter build latency.
+ENV['COCOAPODS_DISABLE_STATS'] = 'true'
+
+project 'Runner', {
+  'Debug' => :debug,
+  'Profile' => :release,
+  'Release' => :release,
+}
+
+def flutter_root
+  generated_xcode_build_settings_path = File.expand_path(File.join('..', 'Flutter', 'Generated.xcconfig'), __FILE__)
+  unless File.exist?(generated_xcode_build_settings_path)
+    raise "#{generated_xcode_build_settings_path} must exist. If you're running pod install manually, make sure flutter pub get is executed first"
+  end
+
+  File.foreach(generated_xcode_build_settings_path) do |line|
+    matches = line.match(/FLUTTER_ROOT\=(.*)/)
+    return matches[1].strip if matches
+  end
+  raise "FLUTTER_ROOT not found in #{generated_xcode_build_settings_path}. Try deleting Generated.xcconfig, then run flutter pub get"
+end
+
+require File.expand_path(File.join('packages', 'flutter_tools', 'bin', 'podhelper'), flutter_root)
+
+flutter_ios_podfile_setup
+
+target 'Runner' do
+  use_frameworks!
+
+  flutter_install_all_ios_pods File.dirname(File.realpath(__FILE__))
+  target 'RunnerTests' do
+    inherit! :search_paths
+  end
+end
+
+post_install do |installer|
+  installer.pods_project.targets.each do |target|
+    flutter_additional_ios_build_settings(target)
+    # Rewarded ads (SPEC §4.10), and the one build setting this feature costs.
+    #
+    # `google_mobile_ads`' **public** headers `#import
+    # <GoogleMobileAds/GoogleMobileAds_Beta.h>`, and every version of the Mobile
+    # Ads SDK ships that header in the framework's `PrivateHeaders` rather than
+    # its public ones (checked: 13.7.0, 13.9.0 and 13.10.0 all do). Under
+    # `use_frameworks!` — which the Swift pods here require — the plugin is
+    # therefore a framework module whose own headers do not verify, and Xcode 26
+    # precompiles modules explicitly, so the build stops at
+    # `PrecompileModule google_mobile_ads`.
+    #
+    # Nothing in this repository can fix that: it is the plugin importing a header
+    # the SDK does not publish. So Clang's non-modular-include check is relaxed —
+    # for every target that has to precompile that module, which under explicit
+    # modules means the consumers as well as the pod itself. It is set here rather
+    # than by hand in Runner.xcodeproj so that it is one line with a reason next to
+    # it, and `ios/Flutter/*.xcconfig` carries the same line for Runner.
+    #
+    # It is the *only* check this feature relaxes, and it relaxes it for headers,
+    # not for anything Dart or our own Objective-C does. Drop it when a plugin
+    # release stops importing the beta header.
+    target.build_configurations.each do |config|
+      config.build_settings['CLANG_ALLOW_NON_MODULAR_INCLUDES_IN_FRAMEWORK_MODULES'] = 'YES'
+    end
+  end
+end

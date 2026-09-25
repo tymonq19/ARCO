@@ -1,0 +1,39 @@
+name: arco
+description: Arco - a circular paddle game for phones, with online duels and a global leaderboard.
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: ^3.11.0
+
+dependencies:
+  flutter:
+    sdk: flutter
+  flutter_localizations:
+    sdk: flutter
+  arco_core:
+    path: packages/arco_core
+  cupertino_icons: ^1.0.8
+  provider: ^6.1.5+1
+  shared_preferences: ^2.5.5
+  http: ^1.6.0
+  web_socket_channel: ^3.0.3
+  sensors_plus: ^7.1.0
+  audioplayers: ^6.7.1
+  flutter_secure_storage: ^11.2.0
+  sign_in_with_apple: ^8.1.0
+  google_sign_in: ^7.2.0
+  purchases_flutter: ^10.13.2
+  google_mobile_ads: ^9.1.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^6.0.0
+  integration_test:
+    sdk: flutter
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/sfx/
