@@ -2,7 +2,7 @@
 #
 # After `fly auth login`:
 #   fly apps create arco                                  # pick another name if taken
-#   fly volumes create arco_data --size 1 --region waw
+#   fly volumes create arco_data --size 1 --region fra
 #   fly deploy
 #   curl https://arco.fly.dev/api/health
 #
@@ -10,7 +10,7 @@
 # https://<name>.fly.dev everywhere.
 
 app = "arco"
-primary_region = "waw"          # Warsaw: closest to the first players
+primary_region = "fra"          # Frankfurt: the closest Fly region to Poland; there is no Warsaw
 
 [build]
   dockerfile = "Dockerfile"
