@@ -4,9 +4,9 @@
 ///
 /// **It is an earning row, not an advertisement for advertising.** It sits
 /// directly under the "earned today" panel, because that is what it is — the other
-/// way to earn — and above the Spark packs, because it costs time rather than
-/// money. One line says what an ad pays and that playing pays more, and then it
-/// stops talking.
+/// way to earn — and above the one-time unlock of SPEC §4.9, because it costs time
+/// rather than money. One line says what an ad pays and that playing pays more, and
+/// then it stops talking.
 ///
 /// **It is absent whenever it would not work.** Not disabled, not a spinner, not
 /// an apology: nothing. There is no button unless an ad is already loaded *and*
@@ -37,8 +37,10 @@ import 'neon_panel.dart';
 ///
 /// Renders an empty box when this deployment credits no ads, when this build has
 /// no AdMob unit, when the platform has no ads, when the day's ads are gone and
-/// there is nothing to say about it, or when no ad is loaded — see
-/// [AdsService.offeredInShop].
+/// there is nothing to say about it, when no ad is loaded, or when the player
+/// bought the one-time unlock of SPEC §4.9 — see [AdsService.offeredInShop]. The
+/// unlock buys **no ads**, not fewer, so the row is gone entirely rather than
+/// explaining itself.
 class SparkAdSection extends StatelessWidget {
   const SparkAdSection({super.key, required this.onWatch, this.onConsent});
 
@@ -139,6 +141,9 @@ class SparkAdSection extends StatelessWidget {
   /// could do with the information and nothing has been taken from them.
   String? _note(Strings s, AdsService ads) {
     if (ads.offeredInShop) return null;
+    // A player who bought the unlock is owed no explanation for a row that is not
+    // there: they bought its absence, and the confirmation card says so.
+    if (ads.premium) return null;
     if (!ads.configured || ads.offer.dailyCap <= 0) return null;
     if (ads.offer.dayFull) return s.t('ads.dayFull');
     if (ads.offer.waitSeconds > 0) {

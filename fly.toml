@@ -1,0 +1,55 @@
+# Fly.io configuration for the Arco server (see SETUP.md §1).
+#
+# After `fly auth login`:
+#   fly apps create arco                                  # pick another name if taken
+#   fly volumes create arco_data --size 1 --region waw
+#   fly deploy
+#   curl https://arco.fly.dev/api/health
+#
+# If you change the app name, change `app` below and use the new
+# https://<name>.fly.dev everywhere.
+
+app = "arco"
+primary_region = "waw"          # Warsaw: closest to the first players
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  # Plain settings live here. Secrets go through `fly secrets set NAME=value`,
+  # which restarts the machine.
+  DB_PATH = "/app/data/arco.db" # absolute, so it is certainly on the volume
+  LOG_LEVEL = "info"            # "debug" while setting things up
+  VERIFY_REPLAYS = "strict"     # never ship with this off: it is the leaderboard
+
+[mounts]
+  source = "arco_data"          # the volume created above
+  destination = "/app/data"     # without this, every deploy wipes the leaderboard
+
+[http_service]
+  internal_port = 8080          # must match PORT in the image
+  force_https = true
+  auto_stop_machines = "off"    # duel rooms live in memory; a sleeping machine
+  auto_start_machines = true    # would drop every game in progress
+  min_machines_running = 1
+
+  [http_service.concurrency]
+    type = "connections"
+    # A duel holds a WebSocket open for the whole game, so the limits are about
+    # concurrent sockets rather than requests per second.
+    soft_limit = 200
+    hard_limit = 250
+
+# One machine only: the volume belongs to a single machine, and room state is
+# in memory, so a second machine would serve a different, empty world.
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"
+
+# `/api/health` answers without authentication and is cheap.
+[[http_service.checks]]
+  interval = "30s"
+  timeout = "5s"
+  grace_period = "10s"
+  method = "GET"
+  path = "/api/health"

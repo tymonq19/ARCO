@@ -438,4 +438,26 @@ void main() {
       expect(card.onTap, isNotNull, reason: card.theme.id.name);
     }
   });
+
+  // SPEC 4.9: the welcome screen runs before any request finishes, off the cache
+  // alone — so a player who bought the unlock and reinstalled, or who wiped the
+  // app's data, must see their looks the moment the cache says they are theirs.
+  testWidgets('every look is offered to a player who bought the unlock', (
+    tester,
+  ) async {
+    useTallPhone(tester);
+    final env = await createTestEnv(playerName: null, premium: true);
+    await tester.pumpWidget(wrapApp(env, const OnboardingScreen()));
+    await tester.pump();
+
+    expect(find.byType(LockBadge), findsNothing);
+    expect(
+      find.text('More looks unlock in the shop as you play.'),
+      findsNothing,
+    );
+    await tapVisible(tester, find.text(cardLabel[ThemeId.glass]!));
+    await tester.pumpAndSettle();
+    expect(GameTheme.read(screenContext(tester)).id, ThemeId.glass);
+    expect(tester.takeException(), isNull);
+  });
 }

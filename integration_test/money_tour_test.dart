@@ -1,5 +1,5 @@
 // The two money paths on a real device, against a real server
-// (SPEC §4.9 purchases, SPEC §4.10 rewarded ads).
+// (SPEC §4.9 the one-time unlock, SPEC §4.10 rewarded ads).
 //
 //   flutter test integration_test/money_tour_test.dart -d <device-id> \
 //       --dart-define=SERVER_URL=http://127.0.0.1:8080 \
@@ -10,15 +10,18 @@
 // What only a device and a live server can show, and what no unit test can:
 //
 //   * the **real StoreKit / Play Billing layer** answers this build — the product
-//     ids in `SparkPacks` are the ids the store has, and the prices shown are the
-//     store's own strings. With Xcode's `ios/Arco.storekit` configuration enabled
-//     in the run scheme this needs no App Store account;
+//     id the server advertises is the id the store has, and the price shown is the
+//     store's own string. With Xcode's `ios/Arco.storekit` configuration enabled
+//     in the run scheme this needs no App Store account. The product is a
+//     **non-consumable**, so a second run on the same simulator finds it already
+//     owned, which is itself one of the cases worth walking;
 //   * the **real Mobile Ads SDK** loads Google's published test rewarded unit and
 //     plays it to the end on this simulator;
 //   * and — the point of both features — **watching an ad and finishing a
-//     purchase add nothing.** The balance on screen moves only after the server
-//     has been credited through its own verified path, and it then equals the
-//     balance the server holds, to the Spark.
+//     purchase grant nothing on the phone.** The balance on screen moves only
+//     after the server has been credited through its own verified path, and it then
+//     equals the balance the server holds, to the Spark; the unlock appears only
+//     after the server says the entitlement is granted.
 //
 // The server side is driven through the verification harness named by
 // `MONEY_CONTROL_URL`: it mints a RevenueCat-shaped webhook and an AdMob
@@ -55,15 +58,14 @@ import 'package:arco/ui/onboarding_screen.dart';
 import 'package:arco/ui/shop_screen.dart';
 import 'package:arco/ui/widgets/neon_button.dart';
 import 'package:arco/ui/widgets/spark_ad.dart';
-import 'package:arco/ui/widgets/spark_packs.dart';
 import 'package:arco/ui/widgets/spark_balance.dart';
+import 'package:arco/ui/widgets/unlock_card.dart';
 
 const Duration _frame = Duration(milliseconds: 16);
 const Duration _screenHold = Duration(seconds: 3);
 
-/// The pack this run buys, and what the server's table says it pays.
-const String _pack = 'arco.sparks.small';
-const int _packSparks = 300;
+/// The product this run buys: `FullUnlock.productId` on the server.
+const String _unlock = 'arco.unlock.full';
 
 /// What one rewarded ad pays, per the server's `AdRate`.
 const int _adSparks = 10;
@@ -128,17 +130,33 @@ Future<bool> waitFor(
 /// widget is not built at all (the catalogue never arrived), or it is built and
 /// returns `SizedBox.shrink()`. A shrink inside a stretching column still takes
 /// the column's width, so height is what "draws nothing" means.
-void expectDrawsNothing(
+///
+/// It **waits** for that, rather than reading the layout the instant a service
+/// call returned. Every caller here asserts right after awaiting something that
+/// ends in `notifyListeners()`, and a listener marks the element dirty for the
+/// *next* frame: the size still on the render object at that moment is the one
+/// from before the answer arrived. Reading it directly makes this assertion a
+/// race, and a race that fails on a device and passes in a widget test is the
+/// worst kind — it reports the app hiding nothing when the app is hiding it a
+/// frame later.
+Future<void> expectDrawsNothing(
   WidgetTester tester,
   Finder finder, {
   required String reason,
-}) {
+}) async {
+  bool drawsNothing() {
+    final elements = finder.evaluate();
+    if (elements.isEmpty) return true;
+    return tester.getSize(finder).height == 0;
+  }
+
+  await waitFor(tester, drawsNothing, timeout: const Duration(seconds: 5));
   if (finder.evaluate().isEmpty) return;
   expect(tester.getSize(finder).height, 0, reason: reason);
 }
 
 /// Scrolls the shop to the bottom, where the earning panel, the ad row and the
-/// Spark packs live, and holds there so a screenshot loop catches them.
+/// unlock card live, and holds there so a screenshot loop catches them.
 Future<void> showMoneySections(WidgetTester tester) async {
   final list = find.byType(Scrollable);
   if (list.evaluate().isEmpty) return;
@@ -163,7 +181,7 @@ Future<Map<String, dynamic>> deliverWebhook({
     headers: const {'Content-Type': 'application/json'},
     body: jsonEncode({
       'playerId': playerId,
-      'productId': _pack,
+      'productId': _unlock,
       'transactionId': transactionId,
     }),
   );
@@ -294,12 +312,12 @@ void main() {
         isFalse,
         reason: 'an unreachable server pays nothing for an ad',
       );
-      expectDrawsNothing(
+      await expectDrawsNothing(
         tester,
-        find.byType(SparkPacksSection),
-        reason: 'no pack section when there is no server',
+        find.byType(UnlockSection),
+        reason: 'no unlock card when there is no server',
       );
-      expectDrawsNothing(
+      await expectDrawsNothing(
         tester,
         find.byType(SparkAdSection),
         reason: 'no ad row when there is no server',
@@ -343,93 +361,149 @@ void main() {
       timeout: const Duration(seconds: 25),
     );
     say(
-      'purchase status=${purchases.status.name} offered=${purchases.offered}',
+      'purchase status=${purchases.status.name} offered=${purchases.offered} '
+      'premium=${purchases.premium}',
     );
-    for (final offer in purchases.offers) {
+    final offer = purchases.offer;
+    if (offer != null) {
       say(
-        '  pack ${offer.productId} = ${offer.sparks} sparks, '
+        '  unlock ${offer.productId} '
         'store price=${offer.priceString ?? '(the store did not answer)'}',
       );
     }
-    final sellsPacks = shop.snapshot.packs.isNotEmpty;
-    if (!sellsPacks) {
+    final sellsUnlock = shop.snapshot.unlock != null;
+    final alreadyPremium = shop.snapshot.premium;
+    if (!sellsUnlock && !alreadyPremium) {
       // A deployment with `PURCHASES_ENABLED=off`, or one the phone could not
       // reach. Either way the shop must be a cosmetics shop with **no money in
-      // it at all** — not an empty price list, not a disabled button, nothing.
+      // it at all** — not an empty price, not a disabled button, nothing.
       say(
-        'the server sells no packs, so the shop shows none: '
+        'the server sells nothing, so the shop shows nothing: '
         'offered=${purchases.offered} status=${purchases.status.name}',
       );
       expect(
         purchases.offered,
         isFalse,
-        reason: 'no packs from the server means no pack section',
+        reason: 'no product from the server means no unlock card',
       );
       // The section is always in the tree and shrinks to nothing, so what is
       // checked is what it draws.
       expect(
-        find.text(strings.t('shop.packsTitle').toUpperCase()),
+        find.text(strings.t('shop.unlockTitle').toUpperCase()),
         findsNothing,
-        reason: 'no packs means no "buy sparks" heading anywhere',
+        reason: 'nothing for sale means no unlock heading anywhere',
       );
-      expectDrawsNothing(
+      await expectDrawsNothing(
         tester,
-        find.byType(SparkPacksSection),
-        reason: 'the pack section must draw nothing at all',
+        find.byType(UnlockSection),
+        reason: 'the unlock card must draw nothing at all',
+      );
+    } else if (alreadyPremium) {
+      // A simulator that already bought the non-consumable on an earlier run —
+      // which is exactly the state a reinstall is in, and the state the old
+      // consumable model could never reach. The offer must be gone, every cosmetic
+      // must be owned, and no ad may be offered.
+      say('this player is already premium: the offer must be gone');
+      expect(
+        purchases.offered,
+        isFalse,
+        reason: 'a player who has paid must never be shown the price again',
+      );
+      expect(
+        shop.snapshot.items.every((item) => shop.snapshot.owns(item.id)),
+        isTrue,
+        reason: 'premium owns the whole catalogue',
+      );
+      expect(
+        ads.offer.available,
+        isFalse,
+        reason: 'the unlock buys no ads, not fewer ads',
       );
     } else {
-      // The server's pack list carries no price: ours is the amount of Sparks,
-      // the store's is the money.
+      // The server's product carries no price: the id is ours, the money is the
+      // store's.
       expect(
-        shop.snapshot.packs.map((p) => p.productId),
-        contains(_pack),
-        reason: 'a server that sells packs must offer this one',
+        shop.snapshot.unlock!.productId,
+        _unlock,
+        reason: 'a server that sells must offer this product',
       );
     }
 
     if (purchases.status == PurchaseStatus.ready) {
       await hold(tester, _screenHold);
-      final report = await purchases.buy(_pack);
+      final report = await purchases.buy(_unlock);
       say(
-        'real store purchase of $_pack -> ${report.kind.name} '
-        'sparks=${report.sparks} serverAnswered=${report.serverAnswered}',
+        'real store purchase of $_unlock -> ${report.kind.name} '
+        'premium=${report.premium} serverAnswered=${report.serverAnswered}',
       );
-      // Whatever the store did, the app may not have invented a Spark: every
-      // figure on screen still has to be the server's.
+      // Whatever the store did, the app may not have unlocked anything by itself:
+      // every figure and every lock on screen is still the server's.
       await expectAppMatchesServer('after the store sheet');
+      expect(
+        shop.snapshot.premium,
+        report.premium,
+        reason: 'the phone and the server must agree about the entitlement',
+      );
     } else {
       say(
         'SKIPPED the store sheet: status=${purchases.status.name}. '
-        'A build with no RevenueCat key, or a device whose store does not know '
-        'these products, cannot open one — and the shop then shows no packs.',
+        'A build with no RevenueCat key, a device whose store does not know this '
+        'product, or a player who already owns it.',
       );
       expect(
-        purchases.offers.every((offer) => !offer.buyable),
-        isTrue,
-        reason: 'an unpriced pack must never be buyable',
+        purchases.offer?.buyable ?? false,
+        isFalse,
+        reason: 'an unpriced product must never be buyable',
       );
     }
 
-    // ------------------------------------------- the server credits, we do not
+    // ------------------------------------------- the server grants, we do not
 
-    if (_controlUrl.isNotEmpty && sellsPacks) {
-      final before = shop.balance;
+    if (_controlUrl.isNotEmpty && (sellsUnlock || alreadyPremium)) {
       final txn = 'storekit-${DateTime.now().microsecondsSinceEpoch}';
       final first = await deliverWebhook(
         playerId: player.id,
         transactionId: txn,
       );
       say('webhook #1 -> $first');
-      expect(first['credited'], _packSparks);
+      // `granted` is about the **transaction**, not about the player, and this
+      // transaction id is minted fresh on every run. A player who is already
+      // premium — the same simulator on a second run, or a second store — still
+      // gets a new ledger row for a payment the server has never seen, which is
+      // what makes refunding one of two rows leave the other standing.
+      expect(
+        first['granted'],
+        isTrue,
+        reason:
+            'a transaction id the server has never seen is a new grant, '
+            'premium or not',
+      );
       expect(first['duplicate'], isFalse);
+      expect(first['premium'], isTrue);
 
       // The app learns about it the only way it can: by asking.
       await purchases.recheck();
       await expectAppMatchesServer('after the webhook');
       expect(
-        shop.balance,
-        before + _packSparks,
-        reason: 'the pack pays exactly what the server table says',
+        shop.snapshot.premium,
+        isTrue,
+        reason: 'the server granted it, so the phone must now see it',
+      );
+      expect(
+        shop.snapshot.items.every((item) => shop.snapshot.owns(item.id)),
+        isTrue,
+        reason: 'every cosmetic, present and future',
+      );
+      await ads.refresh();
+      expect(
+        ads.offeredInShop,
+        isFalse,
+        reason: 'no ad is offered to somebody who paid for none',
+      );
+      await expectDrawsNothing(
+        tester,
+        find.byType(SparkAdSection),
+        reason: 'the ad row must be gone entirely',
       );
       await showMoneySections(tester);
 
@@ -439,19 +513,34 @@ void main() {
         transactionId: txn,
       );
       say('webhook #2 (same transaction) -> $again');
-      expect(again['credited'], 0);
+      expect(again['granted'], isFalse);
       expect(again['duplicate'], isTrue);
       await purchases.recheck();
       await expectAppMatchesServer('after the replayed webhook');
       expect(
-        shop.balance,
-        before + _packSparks,
-        reason: 'a replayed transaction pays nothing',
+        shop.snapshot.premium,
+        isTrue,
+        reason: 'a replayed transaction changes nothing',
+      );
+
+      // And restore, which under this model is a real feature: the server
+      // re-verifies with RevenueCat and answers with what it holds.
+      final restored = await purchases.restore();
+      say(
+        'restore -> premium=${restored.premium} granted=${restored.granted} '
+        'failed=${restored.failed}',
+      );
+      expect(restored.failed, isFalse);
+      expect(
+        restored.premium,
+        isTrue,
+        reason: 'a non-consumable genuinely restores',
       );
     } else {
       say(
-        'SKIPPED the credited purchase halves: '
-        'controlUrl=${_controlUrl.isNotEmpty} sellsPacks=$sellsPacks.',
+        'SKIPPED the granted purchase halves: '
+        'controlUrl=${_controlUrl.isNotEmpty} '
+        'sellsUnlock=$sellsUnlock premium=$alreadyPremium.',
       );
     }
 
@@ -548,11 +637,25 @@ void main() {
         'A build with no AdMob unit, or a server with ads switched off, draws '
         'no ad row at all — which is the documented behaviour.',
       );
-      if (!ads.offer.available) {
-        expectDrawsNothing(
+      // "No ad to offer" and "nothing to say" are different states, and only
+      // the second one draws nothing. A deployment with ads switched off, or a
+      // build with no AdMob unit, owes the player no explanation for a row that
+      // was never there — but an ad that is merely on cooldown, or a day that is
+      // already full, is a sentence worth one line, and the row keeps that line.
+      // Asserting a blank row on `!available` alone would be asserting that the
+      // app forgets to say why.
+      final nothingToSay =
+          !ads.configured || ads.premium || ads.offer.dailyCap <= 0;
+      if (nothingToSay) {
+        await expectDrawsNothing(
           tester,
           find.byType(SparkAdSection),
           reason: 'a server that pays nothing for an ad must draw no ad row',
+        );
+      } else {
+        say(
+          'the ad row keeps a one-line note: dayFull=${ads.offer.dayFull} '
+          'waitSeconds=${ads.offer.waitSeconds}',
         );
       }
     }

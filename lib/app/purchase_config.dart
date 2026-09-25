@@ -10,8 +10,9 @@
 /// They live in `--dart-define`s rather than in source for the same reason the
 /// sign-in client ids do (`account_config.dart`): one checkout builds the dev and
 /// the store flavour, and a fork that has no RevenueCat project simply leaves
-/// them empty and gets no Spark packs — no dead button, no crash, and a game that
-/// is entirely playable, because every Spark a pack sells is earnable by playing.
+/// them empty and is never offered the unlock — no dead button, no crash, and a
+/// game that is entirely playable, because every cosmetic the unlock covers is
+/// earnable by playing.
 library;
 
 import 'package:flutter/foundation.dart';

@@ -591,7 +591,14 @@ class _SoloScreenState extends State<SoloScreen> with WidgetsBindingObserver {
                   color: theme.textPrimary,
                 ),
               ),
-              if (_earned case final earned? when earned > 0)
+              // What the run paid — and only for a player who still has something
+              // to spend it on. One rule across the app (SPEC §4.9): a Spark
+              // figure appears where it can be acted on, and a player who bought
+              // the unlock owns everything it could have bought. The server keeps
+              // crediting the run either way, so nothing is lost and a revoked
+              // entitlement brings the figure back.
+              if (_earned case final earned?
+                  when earned > 0 && shop.snapshot.showsBalance)
                 _earnedChip(theme, earned),
             ],
           ),
@@ -602,7 +609,9 @@ class _SoloScreenState extends State<SoloScreen> with WidgetsBindingObserver {
           // The day's allowance is spent, so this run paid less than it was worth
           // (or nothing at all). Said plainly — a good game that quietly earns
           // zero reads as a bug (SPEC §4.8).
-          if (_earned != null && shop.snapshot.dailyCapReached) ...[
+          if (_earned != null &&
+              shop.snapshot.showsBalance &&
+              shop.snapshot.dailyCapReached) ...[
             const SizedBox(height: 8),
             Text(
               s.f('shop.capReached', {'cap': s.sparks(shop.snapshot.dailyCap)}),

@@ -712,7 +712,11 @@ is whatever the store hands it, printed verbatim. After a purchase the client as
 inventory — it never grants locally, and when the server has not granted yet it says exactly that rather than
 pretending. Handled outcomes: completed, cancelled (silently), pending (Ask to Buy, bank transfer), already owned,
 purchases not allowed on the device, store unavailable, no network, and a purchase that completes while the app is
-backgrounded (a customer-info update, plus a re-check on resume).
+backgrounded (a customer-info update, plus a re-check on resume). The entitlement is **cached** with the rest of the
+shop snapshot, so a restart with no network still has everything the player paid for; the cache grants nothing on its
+own — equipping and buying are still the server's calls, and a stale one costs a refused request — but it is what
+keeps a lock from being drawn over something already bought. The snapshot cache is versioned, and the version that
+held the Spark packs is dropped whole rather than half-read.
 
 **Restore purchases** is an ordinary button that does what it says: it re-links the store account to this player and
 asks the server to re-verify with RevenueCat, and because the product is a non-consumable that genuinely recovers the
@@ -861,11 +865,21 @@ Google's test *application* ids for the same reason (SETUP.md §10).
   slider + CALIBRATE button, joystick side (left/right/float), server URL (advanced, collapsed).
 - **Shop** (§4.8): the Spark balance in the app bar; three sections of cards (Looks / Balls / Paddles), each card a
   real arena painting so it cannot lie about what is being bought; an "earned today" panel showing the day's
-  allowance; and, **below that panel**, the Spark packs of §4.9 with the **store's** own localised prices and a
-  Restore Purchases button whose sentence says plainly that a consumable does not restore. Nothing outside this
-  screen points at the packs. Between the panel and the packs sits the rewarded-ad row of §4.10 — the third way to
+  allowance; and, **below that panel**, the one-time unlock of §4.9 — one card naming in plain words what it gives
+  (every cosmetic now, every one added later, no ads), the **store's** own localised price, one button, and a
+  Restore Purchases action that genuinely restores because the product is a non-consumable. Nothing outside this
+  screen points at it. Between the panel and the unlock sits the rewarded-ad row of §4.10 — the third way to
   get Sparks and the order is the argument: playing, then half a minute of attention, then money. It is absent
   whenever an ad would not work, and it is where the consent form is offered.
+  **Once the unlock is owned** the same screen changes shape rather than growing a badge: every card reads as owned
+  and one tap wears it, the card becomes a quiet confirmation with no price, the ad row is gone entirely (no ads
+  means none, not fewer), and the app bar says *Unlocked* where the balance was. One rule decides the last of those,
+  applied wherever a figure appears — the title screen's shop row, the "earned today" panel, the reward chip on the
+  game-over overlay: **a Spark figure is shown only where it can be acted on**, and a player who owns every cosmetic
+  can act on none of it. The wallet keeps being credited underneath, so a revoked entitlement brings every figure
+  back carrying what was earned meanwhile. The theme picker in **Settings** and the welcome screen honour the same
+  entitlement: everything asks `ShopSnapshot.owns`, which answers the server's `premium` first, so nothing the player
+  has paid for is ever drawn with a lock.
 
 ### 5.2 Controls (`lib/game/input/`)
 Every control mode produces a `PlayerInput` each frame.

@@ -17,6 +17,7 @@ import 'package:arco/ui/widgets/account_offer_card.dart';
 import 'package:arco/ui/widgets/account_section.dart';
 import 'package:arco/ui/widgets/nickname_dialog.dart';
 import 'package:arco/ui/widgets/sign_in_buttons.dart';
+import 'package:arco/ui/widgets/unlock_card.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -363,6 +364,143 @@ void main() {
         tester.takeException(),
         isNull,
         reason: 'scrolling the shop overflowed under $name',
+      );
+      await tester.pumpWidget(const SizedBox());
+    });
+
+    // SPEC 4.9: the one-time unlock is the densest panel in the app — a title, a
+    // three-line list, a price and a button — and the price is a string the store
+    // chose, so it can be longer than anything we sized for. On the narrowest
+    // phone, at the text scale a player with poor eyesight uses, in every look.
+    testWidgets('the unlock card builds at 320x568 and 1.6 text scale '
+        '($name)', (tester) async {
+      useNarrowPhone(tester);
+      final env = await createTestEnv(
+        theme: theme.id,
+        balance: 160,
+        sellsUnlock: true,
+        // A long price string in a currency with a long code, which is what the
+        // store hands back in several markets.
+        store: FakePurchaseGateway(
+          prices: <String, String>{testUnlockProductId: '1 199,00 HUF'},
+        ),
+        adOffer: testAdOffer(),
+        adsGateway: FakeAdsGateway(),
+        secrets: FakeSecretStore.withCredentials(testCredentials(1)),
+      );
+      env.api.profile = PlayerProfile(id: testPlayerId(1), games: 4);
+
+      await tester.pumpWidget(
+        wrapApp(
+          env,
+          Builder(
+            builder: (context) => MediaQuery(
+              data: MediaQuery.of(
+                context,
+              ).copyWith(textScaler: const TextScaler.linear(1.6)),
+              child: const ShopScreen(),
+            ),
+          ),
+        ),
+      );
+      for (var i = 0; i < 25; i++) {
+        await tester.pump(const Duration(milliseconds: 16));
+      }
+
+      final scrollable = tester.firstState<ScrollableState>(
+        find.byType(Scrollable),
+      );
+      for (var i = 0; i < 14; i++) {
+        scrollable.position.jumpTo(scrollable.position.maxScrollExtent);
+        await tester.pump();
+      }
+
+      final s = Strings.read(tester.element(find.byType(ShopScreen)));
+      expect(find.byType(UnlockSection), findsOneWidget);
+      expect(
+        find.text('1 199,00 HUF'),
+        findsOneWidget,
+        reason: 'the store\'s own string, whatever its length',
+      );
+      expect(find.text(s.t('shop.unlockPerk.ads')), findsOneWidget);
+      expect(find.text(s.t('shop.restore')), findsOneWidget);
+      expect(
+        tester.takeException(),
+        isNull,
+        reason: 'the unlock card overflowed under $name at 1.6 text scale',
+      );
+      // The price and the button have to be readable, not merely present: the
+      // whole panel is body text on the theme's own surface, and the light
+      // Modernist look is where a dim token stops clearing 4.5:1.
+      expect(
+        contrastRatio(
+          tester.widget<Text>(find.text('1 199,00 HUF')).style!.color!,
+          theme.panelFill,
+        ),
+        greaterThanOrEqualTo(3.0),
+        reason: 'the price is unreadable on $name',
+      );
+      await tester.pumpWidget(const SizedBox());
+    });
+
+    // And the same screen for a player who has paid: the confirmation, no price,
+    // no ad row, no earning panel, and the app bar carrying what they own.
+    testWidgets('the shop after the unlock builds at 320x568 and 1.6 text '
+        'scale ($name)', (tester) async {
+      useNarrowPhone(tester);
+      final env = await createTestEnv(
+        theme: theme.id,
+        balance: 160,
+        premium: true,
+        adOffer: testAdOffer(),
+        adsGateway: FakeAdsGateway(),
+        secrets: FakeSecretStore.withCredentials(testCredentials(1)),
+      );
+      env.api.profile = PlayerProfile(id: testPlayerId(1), games: 4);
+
+      await tester.pumpWidget(
+        wrapApp(
+          env,
+          Builder(
+            builder: (context) => MediaQuery(
+              data: MediaQuery.of(
+                context,
+              ).copyWith(textScaler: const TextScaler.linear(1.6)),
+              child: const ShopScreen(),
+            ),
+          ),
+        ),
+      );
+      for (var i = 0; i < 25; i++) {
+        await tester.pump(const Duration(milliseconds: 16));
+      }
+
+      final s = Strings.read(tester.element(find.byType(ShopScreen)));
+      final context = tester.element(find.byType(Scaffold).first);
+      expect(GameTheme.read(context).id, theme.id);
+      // The app bar says what they have, in place of a figure with nothing to buy.
+      expect(find.text(s.t('shop.premiumBadge')), findsWidgets);
+      expect(find.text('160'), findsNothing);
+      expect(find.text(s.t('shop.earnHint')), findsNothing);
+      expect(find.byType(ShopCard), findsWidgets);
+      for (final card in tester.widgetList<ShopCard>(find.byType(ShopCard))) {
+        expect(card.state, anyOf(ShopCardState.owned, ShopCardState.worn));
+      }
+
+      final scrollable = tester.firstState<ScrollableState>(
+        find.byType(Scrollable),
+      );
+      for (var i = 0; i < 14; i++) {
+        scrollable.position.jumpTo(scrollable.position.maxScrollExtent);
+        await tester.pump();
+      }
+      expect(find.text(s.t('shop.unlockedHeading')), findsOneWidget);
+      expect(find.text(s.t('shop.unlockedBody')), findsOneWidget);
+      expect(find.text(s.t('shop.restore')), findsOneWidget);
+      expect(
+        tester.takeException(),
+        isNull,
+        reason: 'the confirmation overflowed under $name at 1.6 text scale',
       );
       await tester.pumpWidget(const SizedBox());
     });

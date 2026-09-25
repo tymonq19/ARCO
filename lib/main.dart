@@ -72,7 +72,7 @@ class ArcoApp extends StatefulWidget {
   /// The store (SPEC §4.9). StoreKit and Google Play Billing cannot run in a
   /// test or on an unconfigured simulator, so a test hands over a fake — and a
   /// build with no RevenueCat keys gets one that reports itself unavailable, so
-  /// the shop simply shows no packs.
+  /// the shop simply shows no unlock card.
   final PurchaseGateway? purchases;
 
   /// The ads layer (SPEC §4.10). The Mobile Ads SDK and Google's UMP SDK cannot
@@ -148,10 +148,10 @@ class _ArcoAppState extends State<ArcoApp> {
       storage: widget.storage,
       settings: widget.settings,
     );
-    // Buying Sparks with real money (SPEC §4.9). Nothing here touches StoreKit
-    // or the network at construction: the store is first asked for its prices
-    // when the shop screen opens, and only if the server said there are packs
-    // to price. A build with no RevenueCat keys never calls in at all.
+    // The one-time unlock (SPEC §4.9). Nothing here touches StoreKit or the
+    // network at construction: the store is first asked for its price when the
+    // shop screen opens, and only if the server said there is an unlock to
+    // price. A build with no RevenueCat keys never calls in at all.
     _purchases = PurchaseService(
       gateway: widget.purchases ?? RevenueCatPurchases(),
       api: _api,

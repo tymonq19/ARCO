@@ -1,6 +1,6 @@
 /// The shop (SPEC §4.8, §4.9, §4.10): what can be worn, what it costs in sparks,
 /// what the player already owns — plus the two shortcuts, a rewarded ad and the
-/// Spark packs real money can buy, in that order under the earning panel.
+/// one-time unlock real money buys, in that order under the earning panel.
 ///
 /// **Everything in here is purely cosmetic.** Nothing sold on this screen changes
 /// the simulation — not a paddle's width, not the ball's speed, not a life. The
@@ -39,7 +39,7 @@ import 'widgets/neon_panel.dart';
 import 'widgets/shop_card.dart';
 import 'widgets/spark_ad.dart';
 import 'widgets/spark_balance.dart';
-import 'widgets/spark_packs.dart';
+import 'widgets/unlock_card.dart';
 
 class ShopScreen extends StatefulWidget {
   const ShopScreen({super.key});
@@ -104,8 +104,8 @@ class _ShopScreenState extends State<ShopScreen> with WidgetsBindingObserver {
     // — which is also why the shop works without any sign-in at all.
     await context.read<ShopService>().refresh(issue: true, force: true);
     if (!mounted) return;
-    // The packs come from that answer, so the store is asked for its prices only
-    // once the server has said which products there are to price (SPEC §4.9).
+    // The unlock comes from that answer, so the store is asked for its price only
+    // once the server has said whether there is a product to price (SPEC §4.9).
     unawaited(context.read<PurchaseService>().refresh());
     // And the ad allowance (SPEC §4.10): the server says whether an ad would pay,
     // and only then is one preloaded — so a player at the day's cap costs nobody
@@ -185,13 +185,14 @@ class _ShopScreenState extends State<ShopScreen> with WidgetsBindingObserver {
     }
   }
 
-  /// Buys a Spark pack and reports what the **server** then held (SPEC §4.9).
+  /// Buys the one-time unlock and reports what the **server** then held
+  /// (SPEC §4.9).
   ///
-  /// Nothing is added on this phone at any point. The store takes the money; our
-  /// server credits the Sparks on RevenueCat's verified webhook; this asks the
-  /// server and repeats its answer. When the server has not credited it yet, the
-  /// message says so plainly instead of showing a figure nobody has confirmed.
-  Future<void> _buyPack(SparkPackOffer offer) async {
+  /// Nothing is unlocked on this phone at any point. The store takes the money;
+  /// our server grants the entitlement on RevenueCat's verified webhook; this asks
+  /// the server and repeats its answer. When the server has not granted it yet,
+  /// the message says so plainly instead of showing a state nobody has confirmed.
+  Future<void> _buyUnlock(UnlockOffer offer) async {
     final s = Strings.read(context);
     final purchases = context.read<PurchaseService>();
     context.read<AudioService>().play(Sfx.click);
@@ -200,41 +201,34 @@ class _ShopScreenState extends State<ShopScreen> with WidgetsBindingObserver {
     if (!mounted) return;
     setState(() => _busy = false);
     switch (report.kind) {
-      case PurchaseReportKind.credited:
+      case PurchaseReportKind.unlocked:
         context.read<AudioService>().play(Sfx.star);
-        _say(
-          s.f('shop.packBought', {
-            'sparks': s.sparks(report.sparks),
-            'balance': s.sparks(
-              report.balance ?? context.read<ShopService>().balance,
-            ),
-          }),
-        );
+        _say(s.t('shop.unlockDone'));
       case PurchaseReportKind.awaitingServer:
-        _say(s.t('shop.packWaiting'));
+        _say(s.t('shop.unlockWaiting'));
       case PurchaseReportKind.pending:
-        _say(s.t('shop.packPending'));
+        _say(s.t('shop.unlockPending'));
       case PurchaseReportKind.cancelled:
         // Silence. A player who changed their mind does not need telling.
         break;
       case PurchaseReportKind.notAllowed:
-        _say(s.t('shop.packNotAllowed'));
+        _say(s.t('shop.unlockNotAllowed'));
       case PurchaseReportKind.storeUnavailable:
-        _say(s.t('shop.packStoreDown'));
+        _say(s.t('shop.unlockStoreDown'));
       case PurchaseReportKind.offline:
-        _say(s.t('shop.packOffline'));
+        _say(s.t('shop.unlockOffline'));
       case PurchaseReportKind.failed:
-        _say(s.t('shop.packFailed'));
+        _say(s.t('shop.unlockFailed'));
     }
   }
 
   /// Restore purchases (SPEC §4.9).
   ///
-  /// A Spark pack is a consumable, so there is nothing to re-download — the
-  /// panel says so in as many words above the button. What this genuinely does
-  /// is re-link the store account to this player and ask our server to
-  /// re-verify with RevenueCat, which does recover a payment that was made and
-  /// never landed.
+  /// A real action, not an apology: the unlock is a **non-consumable**, so the
+  /// store keeps a record of it for the account that paid and a reinstall or a
+  /// second device genuinely recovers it. What is reported is what the **server**
+  /// says afterwards — unlocked, nothing found on this store account, or "we could
+  /// not ask" — and those are three different sentences on purpose.
   Future<void> _restore() async {
     final s = Strings.read(context);
     final purchases = context.read<PurchaseService>();
@@ -249,7 +243,7 @@ class _ShopScreenState extends State<ShopScreen> with WidgetsBindingObserver {
     }
     if (report.foundSomething) {
       context.read<AudioService>().play(Sfx.star);
-      _say(s.f('shop.restoreCredited', {'sparks': s.sparks(report.sparks)}));
+      _say(s.t('shop.restoreDone'));
       return;
     }
     _say(s.t('shop.restoreNothing'));
@@ -364,18 +358,23 @@ class _ShopScreenState extends State<ShopScreen> with WidgetsBindingObserver {
         _grid(s, snapshot, slot, cardWidth),
         const SizedBox(height: 18),
       ],
-      _earning(s, theme, snapshot),
-      // Directly under the earning panel, above the packs. The order is the
+      // The day's earning allowance — and **only** for a player who still has
+      // something to spend it on. Once the unlock is bought, a progress bar
+      // towards items they already own is a bar measuring nothing (SPEC §4.9).
+      // The wallet itself is untouched: the server keeps crediting every run.
+      if (snapshot.showsBalance) _earning(s, theme, snapshot),
+      // Directly under the earning panel, above the unlock. The order is the
       // argument twice over: Sparks come from playing; an ad costs half a minute of
-      // attention; a pack costs money. Renders nothing at all when this deployment
-      // credits no ads, this build has no AdMob unit, or no ad is in hand
-      // (SPEC §4.10).
+      // attention; the unlock costs money. Renders nothing at all when this
+      // deployment credits no ads, this build has no AdMob unit, no ad is in hand,
+      // or the player bought the unlock — which buys no ads (SPEC §4.10).
       SparkAdSection(onWatch: _watchAd),
-      // Below the earning panel, always. The order is the argument: Sparks come
-      // from playing, and the packs are the shortcut for anyone who would rather
-      // not wait (SPEC §4.9). Renders nothing at all when this deployment sells
-      // no packs or this build has no store keys.
-      SparkPacksSection(onBuy: _buyPack, onRestore: _restore),
+      // Below the earning panel, always. The order is the argument: everything the
+      // unlock covers is earnable by playing, and the unlock is the shortcut for
+      // anyone who would rather not wait (SPEC §4.9). Renders nothing at all when
+      // this deployment takes no money or this build has no store keys — and
+      // becomes a quiet confirmation once it is owned.
+      UnlockSection(onBuy: _buyUnlock, onRestore: _restore),
       if (_missingContent(snapshot) > 0) ...[
         const SizedBox(height: 12),
         Text(

@@ -139,13 +139,23 @@ class AdsService extends ChangeNotifier {
   /// platform AdMob serves.
   bool get configured => gateway.available;
 
+  /// Whether this player bought the one-time unlock (SPEC §4.9), as the server's
+  /// last offer reported it.
+  ///
+  /// It means **no ads at all** — not fewer, none. The server already answers
+  /// `available: false` for them with the day's allowance untouched, so this is the
+  /// second lock on the same door, and it is worth having: an ad shown to somebody
+  /// who paid for no ads is the one failure this whole flag exists to prevent.
+  bool get premium => _offer.premium;
+
   /// An ad is in flight: the button stops taking taps, so one double tap cannot
   /// open two ads.
   bool get busy => _busy;
 
   /// **An ad is in hand and the server says it would pay.** The only state in
   /// which a "watch an ad" button is ever drawn.
-  bool get canWatch => configured && gateway.loaded && _offer.available;
+  bool get canWatch =>
+      configured && !premium && gateway.loaded && _offer.available;
 
   /// The server says an ad would pay, but the player has not answered the consent
   /// form yet — so there is something to offer, and the form is what is offered.
@@ -155,6 +165,7 @@ class AdsService extends ChangeNotifier {
   /// is anything to ask *for*.
   bool get needsConsent =>
       configured &&
+      !premium &&
       _offer.available &&
       gateway.consent == AdConsentState.required;
 

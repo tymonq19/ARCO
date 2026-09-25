@@ -429,7 +429,7 @@ server with `PURCHASES_SANDBOX=on`. A sandbox purchase against a production serv
 
 - The shop shows **one** thing to buy, with a price in **your** currency, below the "earned today" panel.
 - Buying it: the sheet appears, and afterwards every look in the shop is yours — including ones you had not bought
-  with Sparks — and the ad row is gone.
+  with Sparks — the card is a confirmation with no price, and the ad row is gone.
 - Buying it with the phone in airplane mode after the sheet: "paid, unlocking shortly", and it is unlocked when you
   come back — the webhook does not need the app to be running.
 - Cancelling the sheet says **nothing at all**.
@@ -437,11 +437,16 @@ server with `PURCHASES_SANDBOX=on`. A sandbox purchase against a production serv
   allow purchases.
 - **Delete the app, reinstall it, sign in, and press Restore Purchases**: everything comes back. This is the check
   that matters most, and the one a consumable could never pass.
-- Sparks still accumulate while you play, and the shop says you already own what they would have bought rather than
-  charging you or refusing.
+- **Kill the app, turn on airplane mode and reopen it**: everything is still unlocked, off the cached snapshot alone.
+- The shop shows **no Spark figure** afterwards — the app bar says *Unlocked*, the "earned today" panel is gone, and
+  a finished run shows no reward chip. The wallet is still being credited underneath: read
+  `GET /api/shop/inventory` (or the refund check below) to see it move. One rule, deliberately: a Spark figure
+  appears only where it can be acted on.
+- Every look also reads as owned in **Settings → Theme** and on the welcome screen, with no lock badges anywhere.
 - Refund the sandbox purchase in RevenueCat (Customers → the customer → the transaction → Refund) and confirm the
   unlock goes away — **and that a look you had already bought with Sparks is still yours**, still equipped, while
-  the premium-only one you were wearing falls back to the free default.
+  the premium-only one you were wearing falls back to the free default. The Spark balance comes back too, carrying
+  everything the account earned while it was hidden.
 - `SELECT * FROM purchases` on the server shows one row per payment, with `source = 'webhook'`. A ledger that is all
   `sync` means the webhook is not arriving, and a broken webhook is a refund with nowhere to land.
 

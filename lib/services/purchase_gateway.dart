@@ -1,18 +1,18 @@
 /// The store, behind one interface (SPEC §4.9).
 ///
-/// Everything above this file — which packs are offered, what the messages say,
-/// when the wallet is re-read — is ordinary Dart that a test can drive. Everything
-/// below it is `purchases_flutter`, StoreKit and Google Play Billing, none of
-/// which can run in a unit test and none of which can run on a simulator without a
-/// configured store account. That is the whole reason the seam exists, and it is
-/// the same seam `native_sign_in.dart` draws around the Apple and Google sheets.
+/// Everything above this file — whether the unlock is offered, what the messages
+/// say, when the inventory is re-read — is ordinary Dart that a test can drive.
+/// Everything below it is `purchases_flutter`, StoreKit and Google Play Billing,
+/// none of which can run in a unit test and none of which can run on a simulator
+/// without a configured store account. That is the whole reason the seam exists,
+/// and it is the same seam `native_sign_in.dart` draws around the Apple and
+/// Google sheets.
 ///
-/// **This layer never decides what a purchase is worth.** It reports what the
-/// store did — paid, cancelled, pending, already owned — and the *amount* of
-/// Sparks comes from our server, credited by our server, on RevenueCat's verified
-/// signal (see `purchase_service.dart` and `server/lib/src/purchases.dart`). A
-/// gateway that returned a balance would be a phone deciding how much money it
-/// had spent.
+/// **This layer never decides what a purchase grants.** It reports what the store
+/// did — paid, cancelled, pending, already owned — and the *entitlement* comes
+/// from our server, granted by our server, on RevenueCat's verified signal (see
+/// `purchase_service.dart` and `server/lib/src/purchases.dart`). A gateway that
+/// returned an entitlement would be a phone deciding what it had bought.
 library;
 
 import 'dart:async';
@@ -129,8 +129,9 @@ abstract interface class PurchaseGateway {
   Future<PurchaseAttempt> buy(String productId);
 
   /// Re-links this store account to the current app user and asks the store to
-  /// resend what it has. See `PurchaseService.restore` for what that means for a
-  /// consumable, which is not what most people expect.
+  /// resend what it has. The unlock is a **non-consumable**, so the store really
+  /// does still hold it: this is what makes `PurchaseService.restore` a feature
+  /// rather than an apology.
   Future<void> restore();
 
   /// Fires whenever the store layer's view of this user changes — including a
@@ -211,9 +212,9 @@ class RevenueCatPurchases implements PurchaseGateway {
     try {
       final products = await Purchases.getProducts(
         productIds,
-        // Spark packs are consumables, not subscriptions. Asking for the wrong
-        // category returns nothing at all on Android, which looks exactly like
-        // "the store has no such product".
+        // The unlock is a non-consumable, not a subscription, and both live in
+        // this category. Asking for the wrong one returns nothing at all on
+        // Android, which looks exactly like "the store has no such product".
         productCategory: ProductCategory.nonSubscription,
       );
       return <StorePrice>[

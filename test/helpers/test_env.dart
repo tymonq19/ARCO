@@ -72,7 +72,7 @@ class TestEnv {
   /// owned and what is worn.
   final ShopService shop;
 
-  /// Buying Sparks with real money (SPEC 4.9) over [store] and [api].
+  /// The one-time unlock (SPEC 4.9) over [store] and [api].
   final PurchaseService purchases;
 
   /// The store stand-in behind [purchases]. StoreKit and Google Play Billing
@@ -123,7 +123,8 @@ Future<TestEnv> createTestEnv({
   Set<String> owned = const <String>{},
   int balance = 0,
   FakePurchaseGateway? store,
-  List<ShopPack> packs = const <ShopPack>[],
+  bool sellsUnlock = false,
+  bool premium = false,
   FakeAdsGateway? adsGateway,
   AdOffer? adOffer,
 }) async {
@@ -139,10 +140,20 @@ Future<TestEnv> createTestEnv({
     'playerName': ?playerName,
     'haptics': haptics,
     if (theme != null) 'theme': theme.name,
-    if (ownedItems.isNotEmpty || balance > 0)
+    if (ownedItems.isNotEmpty || balance > 0 || premium)
       'shopCache': jsonEncode(
         ShopSnapshot(
+          // A premium device has certainly synced at least once, so its cache
+          // carries the catalogue — which is what makes a restart with no network
+          // a shop rather than a "needs a connection" panel (SPEC 4.9).
+          items: premium
+              ? FakeApiClient.defaultCatalogue()
+              : const <ShopItem>[],
           owned: ownedItems,
+          // A device that has synced since the purchase (SPEC 4.9): the phone
+          // knows it is premium before any request finishes, which is what makes
+          // a restart with no network keep working.
+          premium: premium,
           equipped: {if (theme != null) 'theme': 'theme.${theme.name}'},
           balance: balance,
           dailyCap: 200,
@@ -157,10 +168,12 @@ Future<TestEnv> createTestEnv({
   final client = api ?? FakeApiClient();
   client.shopOwned.addAll(ownedItems);
   client.shopBalance = balance;
-  // A deployment that sells Sparks (SPEC 4.9) is the exception, not the default:
-  // with no packs the shop draws no money section at all, which is what every
-  // test that predates this feature must keep seeing.
-  if (packs.isNotEmpty) client.shopPacks = packs;
+  // A deployment that takes money (SPEC 4.9) is the exception, not the default:
+  // with no product the shop draws no money section at all, which is what every
+  // test that predates this feature must keep seeing. A premium player implies
+  // one, because somebody had to sell it to them.
+  if (sellsUnlock || premium) client.shopUnlock = testUnlock();
+  if (premium) client.shopPremium = true;
   if (theme != null) client.shopEquipped['theme'] = 'theme.${theme.name}';
   final secretStore = secrets ?? FakeSecretStore();
   final sheets = native ?? FakeNativeSignIn();
@@ -592,23 +605,35 @@ class FakeApiClient extends ApiClient {
   int shopDailyCap = 200;
   int shopLatestVersion = 1;
 
-  /// The Spark packs this "server" sells (SPEC 4.9). **Empty by default**, which
-  /// is a deployment with no RevenueCat configured — so every test that predates
-  /// the money feature sees a shop with no money section at all.
-  List<ShopPack> shopPacks = const <ShopPack>[];
+  /// The one-time unlock this "server" sells (SPEC 4.9). **Null by default**,
+  /// which is a deployment with no RevenueCat configured — so every test that
+  /// predates the money feature sees a shop with no money section at all.
+  UnlockProduct? shopUnlock;
 
-  /// The wallet as `POST /api/purchases/sync` will report it, and what it says
-  /// it credited. A test that wants "the webhook already landed" sets
-  /// [shopBalance] instead and leaves [syncCredited] at 0 — which is exactly the
-  /// shape of the real race.
-  int syncCredited = 0;
-  int syncSparks = 0;
+  /// Whether this "server" has granted this player the unlock (SPEC 4.9).
+  ///
+  /// It is the **server's** answer and nothing else: every item then comes back
+  /// `owned` with no row written anywhere, exactly as the real server answers, so a
+  /// cosmetic added to [catalogueItems] afterwards is covered without being listed
+  /// as bought.
+  bool shopPremium = false;
 
-  /// Sparks this "server" adds to the wallet when the sync call runs, standing in
-  /// for a credit the real server would make from RevenueCat's webhook. It is the
-  /// **server's** move: a test that leaves it at 0 is a server that has not
-  /// credited anything, and the client must then claim nothing.
-  int syncCreditsOnCall = 0;
+  /// How many purchases the last sync call granted, as it reports them. A test
+  /// that wants "the webhook already landed" sets [shopPremium] instead and leaves
+  /// this at 0 — which is exactly the shape of the real race.
+  int syncGranted = 0;
+
+  /// Makes the **next** sync call grant premium, standing in for the grant the
+  /// real server makes from RevenueCat's verified webhook. It is the *server's*
+  /// move: a test that leaves it false is a server that has granted nothing, and
+  /// the client must then claim nothing.
+  bool syncGrantsOnCall = false;
+
+  /// Overrides the `owned` flag the sync reports — whether RevenueCat knows of the
+  /// unlock for this store account at all. Null means "the same as premium", which
+  /// is the ordinary case; setting it true with [shopPremium] false is a refunded
+  /// purchase the store still remembers.
+  bool? syncOwned;
 
   /// Ledger rows the sync call reports.
   List<PurchaseRecord> syncPurchases = const <PurchaseRecord>[];
@@ -700,8 +725,13 @@ class FakeApiClient extends ApiClient {
     owned: owned,
   );
 
-  /// Whether this "server" considers [id] owned: bought, or free.
+  /// Whether this "server" considers [id] owned: premium, bought, or free.
+  ///
+  /// [shopPremium] comes first for the same reason the real server puts it first:
+  /// premium is ownership of the whole catalogue, present and future, not a set of
+  /// rows that has to be kept in step with it.
   bool shopOwns(String id) =>
+      shopPremium ||
       shopOwned.contains(id) ||
       catalogueItems.any((item) => item.id == id && item.free);
 
@@ -755,7 +785,10 @@ class FakeApiClient extends ApiClient {
       ],
       balance: shopBalance,
       equipped: _resolvedEquipped,
-      packs: shopPacks,
+      premium: shopPremium,
+      // The real server stops advertising the product the moment it is owned:
+      // there is then nothing left to sell (SPEC 4.9).
+      unlock: shopPremium ? null : shopUnlock,
     );
   }
 
@@ -774,6 +807,7 @@ class FakeApiClient extends ApiClient {
       equipped: _resolvedEquipped,
       earnedToday: shopEarnedToday,
       dailyCap: shopDailyCap,
+      premium: shopPremium,
     );
   }
 
@@ -827,6 +861,7 @@ class FakeApiClient extends ApiClient {
       alreadyOwned: alreadyOwned,
       balance: shopBalance,
       owned: _ownedIds,
+      premium: shopPremium,
     );
   }
 
@@ -837,17 +872,17 @@ class FakeApiClient extends ApiClient {
     if (offline) throw const ApiException(ApiErrorKind.network, 'offline');
     final failure = syncFailure;
     if (failure != null) throw failure;
-    // The server credits, not the client: this is where the wallet moves, and
-    // the client is only ever told about it afterwards.
-    if (syncCreditsOnCall > 0) {
-      shopBalance += syncCreditsOnCall;
-      syncCredited = 1;
-      syncSparks = syncCreditsOnCall;
-      syncCreditsOnCall = 0;
+    // The server grants, not the client: this is where the entitlement appears,
+    // and the client is only ever told about it afterwards.
+    if (syncGrantsOnCall) {
+      shopPremium = true;
+      syncGranted = 1;
+      syncGrantsOnCall = false;
     }
     return PurchaseSync(
-      credited: syncCredited,
-      sparks: syncSparks,
+      premium: shopPremium,
+      granted: syncGranted,
+      owned: syncOwned ?? shopPremium,
       balance: shopBalance,
       purchases: syncPurchases,
     );
@@ -860,6 +895,23 @@ class FakeApiClient extends ApiClient {
     if (offline) throw const ApiException(ApiErrorKind.network, 'offline');
     final failure = adOfferFailure;
     if (failure != null) throw failure;
+    // A premium player is offered **no** ads (SPEC 4.9), with the day's allowance
+    // untouched: not fewer ads, none. Exactly what the real server answers.
+    if (shopPremium) {
+      return AdOffer(
+        available: false,
+        sparks: adOffer.sparks,
+        earnedToday: adOffer.earnedToday,
+        dailyCap: adOffer.dailyCap,
+        remaining: adOffer.remaining,
+        cooldownSeconds: adOffer.cooldownSeconds,
+        waitSeconds: adOffer.waitSeconds,
+        balance: shopBalance,
+        adTotal: adOffer.adTotal,
+        premium: true,
+        placements: adOffer.placements,
+      );
+    }
     // The server credits, not the client: this is where the wallet and the ad
     // ledger move, and the client is only ever told about it afterwards.
     if (adCreditsOnNextOffer > 0) {
@@ -942,10 +994,10 @@ class FakePurchaseGateway implements PurchaseGateway {
   /// test is that the app prints them rather than making one up.
   Map<String, String> storePrices;
 
+  /// The one product this app sells, at a string no build of this app could have
+  /// produced from a number — which is the property every price test is about.
   static Map<String, String> _defaultPrices() => <String, String>{
-    'arco.sparks.small': '4,99 zł',
-    'arco.sparks.medium': '11,99 zł',
-    'arco.sparks.large': '24,99 zł',
+    testUnlockProductId: '17,99 zł',
   };
 
   /// What the next [buy] reports. A test sets this to walk every outcome a real
@@ -1021,20 +1073,18 @@ class FakePurchaseGateway implements PurchaseGateway {
   }
 }
 
-/// The Spark packs the real server seeds (`server/lib/src/catalogue.dart`), for
-/// a test that wants a deployment which sells them.
+/// The store product identifier the real server sells (`FullUnlock.productId` in
+/// `server/lib/src/catalogue.dart`).
 ///
-/// `test/services/spark_pack_pin_test.dart` pins these against the server's own
-/// table, so a product id cannot drift between the two halves of the feature.
-List<ShopPack> testSparkPacks() => const <ShopPack>[
-  ShopPack(productId: 'arco.sparks.small', sparks: 300, nameKey: 'pack.small'),
-  ShopPack(
-    productId: 'arco.sparks.medium',
-    sparks: 800,
-    nameKey: 'pack.medium',
-  ),
-  ShopPack(productId: 'arco.sparks.large', sparks: 2000, nameKey: 'pack.large'),
-];
+/// `test/services/unlock_pin_test.dart` pins it against the server's own table and
+/// against `ios/Arco.storekit`, so it cannot drift between the halves of the
+/// feature.
+const String testUnlockProductId = 'arco.unlock.full';
+
+/// The one-time unlock the real server advertises (SPEC 4.9), for a test that
+/// wants a deployment which sells it.
+UnlockProduct testUnlock() =>
+    const UnlockProduct(productId: testUnlockProductId, nameKey: 'unlock.full');
 
 /// Stand-in for the ads layer: the Google Mobile Ads SDK and Google's UMP consent
 /// SDK (SPEC 4.10).

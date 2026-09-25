@@ -286,8 +286,8 @@ class HealthInfo {
   /// means the feature is off, so a client offers no sign-in at all.
   final List<String> accounts;
 
-  /// Whether this deployment can take money for Sparks (SPEC §4.9). False means
-  /// the shop shows no packs, for the same reason an empty [accounts] means no
+  /// Whether this deployment can take money at all (SPEC §4.9). False means the
+  /// shop offers no unlock, for the same reason an empty [accounts] means no
   /// sign-in buttons: the app offers exactly what will work.
   final bool purchases;
 }
@@ -508,67 +508,51 @@ class ShopItem {
   };
 }
 
-/// One Spark pack as the server advertises it (SPEC §4.9): a **store product**,
-/// priced in money by Apple or Google.
+/// The one-time unlock as the server advertises it (SPEC §4.9): a **store
+/// product**, priced in money by Apple or Google.
 ///
-/// **There is no price here, and there must never be one.** The only honest
-/// price is the one the device's own store reports — localised, tax-inclusive,
-/// per market, and changeable without a deploy. What the server owns is the other
-/// half: how many Sparks the pack pays. A price in this class would be a number
-/// this app invented about somebody's money.
+/// **There is no price here, and there must never be one.** The only honest price
+/// is the one the device's own store reports — localised, tax-inclusive, per
+/// market, and changeable without a deploy. What the server owns is the other half
+/// of the deal: *what the purchase grants*, which is not a number at all. A price
+/// in this class would be a number this app invented about somebody's money.
 ///
-/// The packs list is empty unless the deployment has RevenueCat configured, which
-/// is what makes the shop's money section disappear rather than offer a button
-/// that cannot work.
-class ShopPack {
-  const ShopPack({
-    required this.productId,
-    required this.sparks,
-    required this.nameKey,
-  });
+/// The catalogue carries no unlock at all when the deployment sells nothing, and
+/// none once the player is already premium — in both cases there is nothing to
+/// offer, and the shop draws no offer rather than a button that cannot work.
+class UnlockProduct {
+  const UnlockProduct({required this.productId, required this.nameKey});
 
   /// The store product identifier: the same string in App Store Connect, in the
   /// Play Console and in RevenueCat. It is what the store is asked for, and what
-  /// the server's own table turns into Sparks.
+  /// the server's own table turns into premium.
   final String productId;
 
-  /// Sparks the server credits for this pack. The server's number — shown so the
-  /// player knows what they are getting, never used to compute a balance.
-  final int sparks;
-
-  /// `Strings` key of the display name (`pack.small`).
+  /// `Strings` key of the display name (`unlock.full`).
   final String nameKey;
 
-  static ShopPack? fromJson(Map<String, dynamic> j) {
+  static UnlockProduct? fromJson(Map<String, dynamic> j) {
     final productId = j['productId'];
     if (productId is! String || productId.isEmpty) return null;
-    final sparks = (j['sparks'] as num?)?.toInt() ?? 0;
-    if (sparks <= 0) return null;
-    return ShopPack(
+    return UnlockProduct(
       productId: productId,
-      sparks: sparks,
       nameKey: j['nameKey'] as String? ?? productId,
     );
   }
 
-  Map<String, dynamic> toJson() => {
-    'productId': productId,
-    'sparks': sparks,
-    'nameKey': nameKey,
-  };
+  Map<String, dynamic> toJson() => {'productId': productId, 'nameKey': nameKey};
 }
 
-/// One row of the paid-purchase ledger, as `POST /api/purchases/sync` reports it
+/// One row of the purchase ledger, as `POST /api/purchases/sync` reports it
 /// (SPEC §4.9).
 ///
-/// It exists so that "where did these Sparks come from" has an answer on the
-/// device asking the question, and so Restore Purchases can show something true
-/// instead of a spinner and a shrug.
+/// It exists so that "why is everything unlocked" has an answer on the device
+/// asking the question, and so Restore Purchases can show something true instead
+/// of a spinner and a shrug.
 class PurchaseRecord {
   const PurchaseRecord({
     required this.transactionId,
     required this.productId,
-    required this.sparks,
     required this.refunded,
     this.store = '',
     this.purchasedAt,
@@ -578,8 +562,12 @@ class PurchaseRecord {
   final String transactionId;
 
   final String productId;
-  final int sparks;
+
+  /// Whether a refund or a chargeback has revoked it. A refunded row stays in
+  /// the ledger: it is a record of a payment that happened, not of an
+  /// entitlement.
   final bool refunded;
+
   final String store;
   final DateTime? purchasedAt;
 
@@ -589,7 +577,6 @@ class PurchaseRecord {
     return PurchaseRecord(
       transactionId: transactionId,
       productId: j['productId'] as String? ?? '',
-      sparks: (j['sparks'] as num?)?.toInt() ?? 0,
       refunded: j['refunded'] == true,
       store: j['store'] as String? ?? '',
       purchasedAt: DateTime.tryParse(j['purchasedAt'] as String? ?? ''),
@@ -600,32 +587,43 @@ class PurchaseRecord {
 /// The `200` body of `POST /api/purchases/sync` (SPEC §4.9).
 ///
 /// The request carried nothing: the server asked RevenueCat with its own key.
-/// Everything here is therefore the server's answer about the server's wallet —
+/// Everything here is therefore the server's answer about what the server holds —
 /// which is the whole reason this endpoint exists in this shape.
 class PurchaseSync {
   const PurchaseSync({
-    required this.credited,
-    required this.sparks,
+    required this.premium,
+    required this.granted,
+    required this.owned,
     required this.balance,
     this.purchases = const <PurchaseRecord>[],
   });
 
-  /// How many purchases this call turned into Sparks. Usually 0, and that is the
-  /// healthy case: it means the webhook got there first.
-  final int credited;
+  /// **The answer the client acts on**: everything is unlocked, or it is not.
+  final bool premium;
 
-  /// Sparks credited by this call.
-  final int sparks;
+  /// How many purchases this call turned into premium. Usually 0, and that is the
+  /// healthy case: it means the webhook got there first, or there was nothing to
+  /// restore.
+  final int granted;
 
-  /// The wallet afterwards, from the server.
+  /// Whether RevenueCat knows of the unlock for this store account at all.
+  ///
+  /// This is what separates "restored" from "there was nothing to restore" — the
+  /// one sentence a Restore button has to be able to say truthfully. It can be
+  /// true while [premium] is false: a refunded purchase the store still reports.
+  final bool owned;
+
+  /// The wallet afterwards, from the server. A premium player still earns Sparks
+  /// by playing; they simply have nothing left to spend them on.
   final int balance;
 
   /// The ledger, newest first.
   final List<PurchaseRecord> purchases;
 
   static PurchaseSync fromJson(Map<String, dynamic> j) => PurchaseSync(
-    credited: (j['credited'] as num?)?.toInt() ?? 0,
-    sparks: (j['sparks'] as num?)?.toInt() ?? 0,
+    premium: j['premium'] == true,
+    granted: (j['granted'] as num?)?.toInt() ?? 0,
+    owned: j['owned'] == true,
     balance: (j['balance'] as num?)?.toInt() ?? 0,
     purchases: <PurchaseRecord>[
       for (final raw in (j['purchases'] as List?) ?? const [])
@@ -656,6 +654,7 @@ class AdOffer {
     required this.waitSeconds,
     required this.balance,
     required this.adTotal,
+    this.premium = false,
     this.placements = const <String>[],
   });
 
@@ -698,6 +697,12 @@ class AdOffer {
   final int balance;
   final int adTotal;
 
+  /// This player bought the one-time unlock (SPEC §4.9), so they are offered **no
+  /// ads at all** — not fewer, none. The allowance is untouched and [available]
+  /// is false, which is why this flag is worth carrying: it is the difference
+  /// between "no ads, ever, because you paid" and "come back tomorrow".
+  final bool premium;
+
   /// Placement names this server knows (`shop`, `gameOver`), so a build newer or
   /// older than the server can tell.
   final List<String> placements;
@@ -716,6 +721,7 @@ class AdOffer {
     waitSeconds: (j['waitSeconds'] as num?)?.toInt() ?? 0,
     balance: (j['balance'] as num?)?.toInt() ?? 0,
     adTotal: (j['adTotal'] as num?)?.toInt() ?? 0,
+    premium: j['premium'] == true,
     placements: <String>[
       for (final p in (j['placements'] as List?) ?? const []) '$p',
     ],
@@ -732,7 +738,8 @@ class ShopCatalogue {
     required this.items,
     required this.balance,
     required this.equipped,
-    this.packs = const <ShopPack>[],
+    this.premium = false,
+    this.unlock,
   });
 
   /// The catalogue version this answer speaks, i.e. the one that was asked for.
@@ -753,10 +760,18 @@ class ShopCatalogue {
   /// Slot name → item id, defaults already filled in by the server.
   final Map<String, String> equipped;
 
-  /// The Spark packs this deployment sells (SPEC §4.9). **Empty** unless the
-  /// server has RevenueCat configured, which is how the shop knows not to draw a
-  /// money section at all.
-  final List<ShopPack> packs;
+  /// Whether this player holds the one-time unlock (SPEC §4.9). Every item then
+  /// comes back `owned`, with no row anywhere — which is what makes a cosmetic
+  /// added next year covered the moment it is added.
+  final bool premium;
+
+  /// The one-time unlock this deployment sells (SPEC §4.9), or null.
+  ///
+  /// Null in two completely different cases the shop treats the same way: the
+  /// deployment sells nothing, and the player has already bought it. In both there
+  /// is nothing left to offer, so the shop draws no offer rather than a button
+  /// that cannot work. [premium] is what tells the two apart.
+  final UnlockProduct? unlock;
 
   static ShopCatalogue fromJson(Map<String, dynamic> j) => ShopCatalogue(
     version: (j['version'] as num?)?.toInt() ?? 1,
@@ -768,10 +783,11 @@ class ShopCatalogue {
     ],
     balance: (j['balance'] as num?)?.toInt() ?? 0,
     equipped: _equippedFrom(j['equipped']),
-    packs: <ShopPack>[
-      for (final raw in (j['packs'] as List?) ?? const [])
-        if (raw is Map<String, dynamic>) ?ShopPack.fromJson(raw),
-    ],
+    premium: j['premium'] == true,
+    unlock: switch (j['unlock']) {
+      final Map<String, dynamic> raw => UnlockProduct.fromJson(raw),
+      _ => null,
+    },
   );
 }
 
@@ -790,6 +806,7 @@ class ShopInventory {
     this.spentTotal = 0,
     this.purchasedTotal = 0,
     this.adTotal = 0,
+    this.premium = false,
   });
 
   final int version;
@@ -809,8 +826,13 @@ class ShopInventory {
   final int earnedTotal;
   final int spentTotal;
 
-  /// Sparks ever bought with money (SPEC §4.9), kept apart from [earnedTotal].
+  /// Purchases ever made with money (SPEC §4.9). One, for a player who bought the
+  /// unlock; more than one only where two stores each hold a record of it.
   final int purchasedTotal;
+
+  /// Whether this player holds the one-time unlock (SPEC §4.9): every cosmetic is
+  /// theirs, present and future, and no ad is ever offered.
+  final bool premium;
 
   /// Sparks ever earned from watching rewarded ads (SPEC §4.10), kept apart from
   /// both — because the ad allowance is its own daily cap and must never consume
@@ -829,6 +851,7 @@ class ShopInventory {
     spentTotal: (j['spentTotal'] as num?)?.toInt() ?? 0,
     purchasedTotal: (j['purchasedTotal'] as num?)?.toInt() ?? 0,
     adTotal: (j['adTotal'] as num?)?.toInt() ?? 0,
+    premium: j['premium'] == true,
   );
 }
 
@@ -848,6 +871,7 @@ class ShopPurchase {
     required this.alreadyOwned,
     required this.balance,
     required this.owned,
+    this.premium = false,
   }) : error = null;
 
   const ShopPurchase.refused({
@@ -857,7 +881,11 @@ class ShopPurchase {
     required this.balance,
   }) : charged = 0,
        alreadyOwned = false,
-       owned = const <String>[];
+       owned = const <String>[],
+       // A refusal is a short wallet, and the server sends no `premium` with one:
+       // a premium player is never refused, because every item reads as already
+       // owned and costs 0.
+       premium = false;
 
   /// `insufficient_tokens` or `unknown_item`; null on success.
   final String? error;
@@ -879,6 +907,10 @@ class ShopPurchase {
 
   /// Everything owned after the purchase.
   final List<String> owned;
+
+  /// Whether the player holds the one-time unlock (SPEC §4.9). Only ever read off
+  /// a successful answer — see the `refused` constructor.
+  final bool premium;
 
   bool get ok => error == null;
 
@@ -1246,6 +1278,7 @@ class ApiClient {
         owned: <String>[
           for (final id in (j['owned'] as List?) ?? const []) '$id',
         ],
+        premium: j['premium'] == true,
       );
     }
     final code = j?['error'];
@@ -1295,19 +1328,22 @@ class ApiClient {
     throw _failure(res, j);
   }
 
-  // ------------------------------------------- paid Sparks (SPEC §4.9)
+  // --------------------------------------- the one-time unlock (SPEC §4.9)
 
   /// `POST /api/purchases/sync` — asks the server to re-check with RevenueCat
-  /// (SPEC §4.9).
+  /// (SPEC §4.9). This is what **Restore Purchases** is.
   ///
   /// **The request carries nothing.** Not a product id, not a transaction id, and
   /// certainly not an amount: the server asks RevenueCat with its own secret key
   /// and credits from that answer, so there is nothing this phone could say that
   /// would be believed. The body is `{}` only because the call is a POST.
   ///
-  /// It exists for the impatient case: the webhook is authoritative but can be a
-  /// few seconds late, and a player who has just paid is looking at the screen.
-  /// Almost every call reports `credited: 0`, which means the webhook won.
+  /// It serves two cases with one shape. The impatient one: the webhook is
+  /// authoritative but can be a few seconds late, and a player who has just paid
+  /// is looking at the screen. And the genuine restore: the unlock is a
+  /// **non-consumable**, so a reinstall or a second device really does have
+  /// something to recover, and the server grants it keyed on the store's own
+  /// transaction id — which is what makes running this any number of times safe.
   Future<PurchaseSync> purchasesSync(PlayerCredentials credentials) async {
     final res = await _send(
       () => _client.post(

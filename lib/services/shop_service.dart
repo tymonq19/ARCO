@@ -1,10 +1,10 @@
 /// The shop, client side (SPEC §4.8): the wallet, what is owned, what is worn,
 /// buying and equipping.
 ///
-/// The catalogue it caches also carries the Spark packs of SPEC §4.9 when the
-/// deployment sells them — but nothing here spends money. Paying happens in
-/// `purchase_service.dart`, and the Sparks it buys arrive the only way any Spark
-/// arrives: because the server said so.
+/// The catalogue it caches also carries the one-time unlock of SPEC §4.9 when the
+/// deployment sells one, and whether this player already holds it — but nothing
+/// here spends money. Paying happens in `purchase_service.dart`, and what it buys
+/// arrives the only way anything arrives: because the server said so.
 ///
 /// **Everything here is purely cosmetic.** Not one byte of it reaches
 /// `packages/arco_core`: a skin picks a shape and a palette, never a paddle
@@ -126,7 +126,8 @@ class ShopBuyResult {
 class ShopSnapshot {
   const ShopSnapshot({
     this.items = const <ShopItem>[],
-    this.packs = const <ShopPack>[],
+    this.unlock,
+    this.premium = false,
     this.owned = const <String>{},
     this.equipped = const <String, String>{},
     this.balance = 0,
@@ -163,14 +164,25 @@ class ShopSnapshot {
   /// The catalogue in the order the server served it: by slot, cheapest first.
   final List<ShopItem> items;
 
-  /// The Spark packs the server sells (SPEC §4.9), cheapest first. **Empty**
-  /// unless the deployment has RevenueCat configured — which is how the shop
-  /// knows not to draw a money section at all.
+  /// The one-time unlock the server sells (SPEC §4.9), or null when there is
+  /// nothing to offer — either because the deployment sells nothing, or because
+  /// this player already bought it ([premium]).
   ///
-  /// A pack carries an amount of Sparks and a store product identifier, and
-  /// deliberately no price: the price is the store's, localised, and is fetched
-  /// from the device's own store by `PurchaseService`.
-  final List<ShopPack> packs;
+  /// It carries a store product identifier and a name key, and deliberately no
+  /// price: the price is the store's, localised, and is fetched from the device's
+  /// own store by `PurchaseService`.
+  final UnlockProduct? unlock;
+
+  /// Whether this player holds the one-time unlock (SPEC §4.9): every cosmetic is
+  /// theirs, present and future, and no ad is ever offered.
+  ///
+  /// It is the **server's** answer, cached with the rest of the snapshot so a
+  /// player who paid still has everything on a plane and still has it after a
+  /// restart with no network. It grants nothing by itself — equipping and buying
+  /// are the server's calls, and a stale cache costs one refused request — but it
+  /// is what decides whether a lock badge is drawn, and drawing one over something
+  /// a player has paid for is the one mistake this flag exists to prevent.
+  final bool premium;
 
   /// Item ids the server says this player may wear, free ones included.
   final Set<String> owned;
@@ -203,9 +215,17 @@ class ShopSnapshot {
   /// Both numbers are the server's; this only compares them.
   bool get dailyCapReached => dailyCap > 0 && earnedToday >= dailyCap;
 
-  /// Whether [itemId] may be worn: the server said so, or it costs nothing.
+  /// Whether [itemId] may be worn: this player is premium, the server said so, or
+  /// it costs nothing.
+  ///
+  /// [premium] comes first on purpose. The server already returns every item as
+  /// owned for a premium player, so the set below normally says the same thing —
+  /// but a cosmetic added to the server after this snapshot was cached, or an
+  /// answer read off a phone that has been offline since before the purchase,
+  /// would otherwise come out locked. "Everything, present and future" is what was
+  /// bought, so it is answered here directly rather than inferred from a list.
   bool owns(String itemId) =>
-      owned.contains(itemId) || freeItemIds.contains(itemId);
+      premium || owned.contains(itemId) || freeItemIds.contains(itemId);
 
   /// Whether [itemId] is what is worn in its slot.
   bool isEquipped(String itemId) {
@@ -216,6 +236,14 @@ class ShopSnapshot {
   /// Whether the wallet covers [item] right now. A comparison of two server
   /// numbers, never a sum computed here.
   bool canAfford(ShopItem item) => known && balance >= item.priceTokens;
+
+  /// Whether the Spark wallet is worth showing at all.
+  ///
+  /// False for a premium player: every cosmetic is already theirs, so the balance
+  /// has nothing left to buy and a figure nobody can act on is noise. The server
+  /// keeps crediting it — nothing is lost, and if a refund ever revoked premium the
+  /// wallet comes back with everything it earned in the meantime.
+  bool get showsBalance => !premium;
 
   /// The catalogue entry for [itemId], or null when the catalogue has none.
   ShopItem? item(String itemId) {
@@ -255,7 +283,8 @@ class ShopSnapshot {
 
   ShopSnapshot copyWith({
     List<ShopItem>? items,
-    List<ShopPack>? packs,
+    UnlockProduct? unlock,
+    bool? premium,
     Set<String>? owned,
     Map<String, String>? equipped,
     int? balance,
@@ -265,7 +294,8 @@ class ShopSnapshot {
     DateTime? knownAt,
   }) => ShopSnapshot(
     items: items ?? this.items,
-    packs: packs ?? this.packs,
+    unlock: unlock ?? this.unlock,
+    premium: premium ?? this.premium,
     owned: owned ?? this.owned,
     equipped: equipped ?? this.equipped,
     balance: balance ?? this.balance,
@@ -280,9 +310,10 @@ class ShopSnapshot {
       copyWith(equipped: <String, String>{...equipped, slot: itemId});
 
   Map<String, dynamic> toJson() => {
-    'v': 1,
+    'v': 2,
     'items': [for (final item in items) item.toJson()],
-    'packs': [for (final pack in packs) pack.toJson()],
+    'unlock': ?unlock?.toJson(),
+    'premium': premium,
     'owned': owned.toList(),
     'equipped': equipped,
     'balance': balance,
@@ -293,17 +324,24 @@ class ShopSnapshot {
   };
 
   /// Reads a cached snapshot; null for anything that is not one this build wrote.
+  ///
+  /// Version 2 is where the Spark packs of the old money model became one
+  /// non-consumable unlock (SPEC §4.9). A version 1 cache is **dropped** rather
+  /// than half-read: it is a first sync away from being replaced, and reading a
+  /// wallet out of it while ignoring what it said about money would be the kind of
+  /// half-migration that later looks like a bug.
   static ShopSnapshot? fromJson(Map<String, dynamic>? j) {
-    if (j == null || j['v'] != 1) return null;
+    if (j == null || j['v'] != 2) return null;
     return ShopSnapshot(
       items: <ShopItem>[
         for (final raw in (j['items'] as List?) ?? const [])
           if (raw is Map<String, dynamic>) ?ShopItem.fromJson(raw),
       ],
-      packs: <ShopPack>[
-        for (final raw in (j['packs'] as List?) ?? const [])
-          if (raw is Map<String, dynamic>) ?ShopPack.fromJson(raw),
-      ],
+      unlock: switch (j['unlock']) {
+        final Map<String, dynamic> raw => UnlockProduct.fromJson(raw),
+        _ => null,
+      },
+      premium: j['premium'] == true,
       owned: <String>{
         for (final id in (j['owned'] as List?) ?? const []) '$id',
       },
@@ -388,6 +426,11 @@ class ShopService extends ChangeNotifier {
   /// "0" is a claim about the wallet, and we would not be entitled to make it.
   bool get balanceKnown => _snapshot.known;
   int get balance => _snapshot.balance;
+
+  /// Whether this player holds the one-time unlock (SPEC §4.9) — the server's
+  /// answer, as last heard. Read by every screen that asks "is this locked", and
+  /// the reason a paid player never sees a lock badge, a price or an ad.
+  bool get premium => _snapshot.premium;
 
   bool get loading => _status == ShopStatus.loading;
 
@@ -484,10 +527,14 @@ class ShopService extends ChangeNotifier {
     };
     _snapshot = ShopSnapshot(
       items: catalogue.items,
-      // Whether this deployment sells Sparks at all, and for how many. Cached
-      // with the rest of the catalogue so a shop opened offline still knows
-      // there is a money section — it just cannot price it (SPEC §4.9).
-      packs: catalogue.packs,
+      // What this deployment sells, if anything. Cached with the rest of the
+      // catalogue so a shop opened offline still knows there is an offer — it
+      // just cannot price it, because the price is the store's (SPEC §4.9).
+      unlock: catalogue.unlock,
+      // Both endpoints answer it and they cannot disagree, but taking either as
+      // enough is the safe direction: the failure that matters is drawing a lock
+      // over something a player has paid for.
+      premium: inventory.premium || catalogue.premium,
       owned: owned,
       equipped: inventory.equipped.isEmpty
           ? catalogue.equipped
@@ -566,6 +613,9 @@ class ShopService extends ChangeNotifier {
       _snapshot = _snapshot.copyWith(
         owned: <String>{..._snapshot.owned, ...purchase.owned, purchase.itemId},
         balance: purchase.balance,
+        // The server's answer, carried on every successful buy. A premium player
+        // is never refused one — every item reads as already owned and costs 0.
+        premium: purchase.premium,
         knownAt: _now(),
       );
       _confirmedAt = _now();

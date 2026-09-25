@@ -152,6 +152,33 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
+  // SPEC 4.9: a player who bought the unlock has nothing left to spend sparks on,
+  // so the title screen stops leading with a figure they cannot act on. The wallet
+  // itself is untouched — the server keeps crediting every run — which is why this
+  // is presentation and not a lie.
+  testWidgets('a player who bought the unlock is shown that instead of a '
+      'balance', (tester) async {
+    useTallPhone(tester);
+    final env = await createTestEnv(premium: true, balance: 240);
+
+    await tester.pumpWidget(
+      wrapApp(
+        env,
+        const HomeScreen(),
+        routes: {'/shop': (_) => const ShopScreen()},
+      ),
+    );
+    await tester.pump();
+
+    expect(find.text('Unlocked'), findsOneWidget);
+    expect(find.text('240 sparks'), findsNothing);
+    expect(find.text('Looks, balls and paddles'), findsOneWidget);
+    // The way in is exactly where it was: the shop is still a shop.
+    expect(find.text('SHOP'), findsOneWidget);
+    expect(env.shop.balance, 240, reason: 'the wallet is untouched underneath');
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('says nothing about a wallet the server has never described', (
     tester,
   ) async {

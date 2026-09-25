@@ -489,6 +489,71 @@ void main() {
       expect(saved.skins, env.shop.equipped);
     });
 
+    // SPEC 4.9: the entitlement is cached with everything else, because the game
+    // has to open wearing what was paid for before any request finishes, and has
+    // to keep working on a phone with no network.
+    test('the entitlement round-trips through storage', () async {
+      final env = await createTestEnv(
+        premium: true,
+        balance: 60,
+        secrets: FakeSecretStore.withCredentials(testCredentials(1)),
+      );
+      await env.shop.refresh();
+      final saved = ShopSnapshot.fromJson(env.storage.shopCache)!;
+
+      expect(saved.premium, isTrue);
+      expect(
+        saved.owns('theme.glass'),
+        isTrue,
+        reason: 'everything, present and future',
+      );
+      expect(
+        saved.showsBalance,
+        isFalse,
+        reason: 'a wallet with nothing to buy is not the headline',
+      );
+      // And the offer is gone from the cache too: the server stops advertising
+      // what is already owned.
+      expect(saved.unlock, isNull);
+    });
+
+    test('a free player claims nothing out of the cache', () async {
+      final env = await createTestEnv(
+        sellsUnlock: true,
+        secrets: FakeSecretStore.withCredentials(testCredentials(1)),
+      );
+      await env.shop.refresh();
+      final saved = ShopSnapshot.fromJson(env.storage.shopCache)!;
+
+      expect(saved.premium, isFalse);
+      expect(saved.owns('theme.glass'), isFalse);
+      expect(saved.showsBalance, isTrue);
+      expect(saved.unlock!.productId, testUnlockProductId);
+    });
+
+    test('a cache from the Spark-pack model is dropped, not half-read', () async {
+      // Version 1 held Spark packs and no entitlement (SPEC 4.9). Reading a
+      // wallet out of it while ignoring what it said about money is the kind of
+      // half-migration that later looks like a bug, so it is dropped whole: one
+      // refresh replaces it.
+      final env = await createTestEnv();
+      await env.storage.setShopCache({
+        'v': 1,
+        'balance': 900,
+        'owned': ['theme.glass'],
+        'packs': [
+          {'productId': 'arco.sparks.small', 'sparks': 300},
+        ],
+        'knownAt': DateTime.now().toUtc().toIso8601String(),
+      });
+      final restarted = relaunch(env);
+      expect(restarted.balanceKnown, isFalse);
+      expect(restarted.balance, 0);
+      expect(restarted.premium, isFalse);
+      expect(restarted.snapshot.owns('theme.glass'), isFalse);
+      restarted.dispose();
+    });
+
     test('a cache from another build is ignored, not crashed on', () async {
       final env = await createTestEnv();
       await env.storage.setShopCache({'v': 99, 'balance': 9000});

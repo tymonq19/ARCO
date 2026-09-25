@@ -8,7 +8,8 @@
 ///   cooldown running — every one of those draws no button. A rewarded button that
 ///   spins or fails is worse than no button.
 /// * **the order on screen is the argument**: earning panel, then the ad, then the
-///   packs. Playing first, half a minute of attention second, money last.
+///   one-time unlock. Playing first, half a minute of attention second, money
+///   last. And no ad at all for a player who bought the unlock (SPEC §4.9).
 /// * **the consent form is offered in the shop and never on the game-over
 ///   overlay**, and refusing it leaves a fully working shop with no ad row.
 /// * **no number on screen is this app's**: a watched ad shows the balance the
@@ -52,11 +53,11 @@ void main() {
     int balance = 0,
     FakeAdsGateway? gateway,
     AdOffer? offer,
-    List<ShopPack>? packs,
+    bool sellsUnlock = false,
   }) async {
     final env = await createTestEnv(
       balance: balance,
-      packs: packs ?? const <ShopPack>[],
+      sellsUnlock: sellsUnlock,
       adsGateway: gateway ?? FakeAdsGateway(),
       adOffer: offer ?? testAdOffer(balance: balance),
       secrets: FakeSecretStore.withCredentials(testCredentials(1)),
@@ -185,19 +186,23 @@ void main() {
       expect(find.text(en.t('ads.watch')), findsOneWidget);
     });
 
-    testWidgets('sits between the earning panel and the packs', (tester) async {
+    testWidgets('sits between the earning panel and the unlock', (
+      tester,
+    ) async {
       // The order is the argument twice over: sparks come from playing; an ad costs
-      // attention; a pack costs money.
+      // attention; the unlock costs money.
       useLargeViewport(tester);
-      final env = await adEnv(packs: testSparkPacks());
+      final env = await adEnv(sellsUnlock: true);
       await openShop(tester, env);
-      await scrollTo(tester, headingText(en.t('shop.packsTitle')));
+      await scrollTo(tester, headingText(en.t('shop.unlockTitle')));
 
       final earning = tester.getTopLeft(find.text(en.t('shop.earnHint'))).dy;
       final ad = tester.getTopLeft(headingText(en.t('ads.title'))).dy;
-      final packs = tester.getTopLeft(headingText(en.t('shop.packsTitle'))).dy;
+      final unlock = tester
+          .getTopLeft(headingText(en.t('shop.unlockTitle')))
+          .dy;
       expect(ad, greaterThan(earning));
-      expect(packs, greaterThan(ad));
+      expect(unlock, greaterThan(ad));
     });
 
     testWidgets('a tap shows the ad, attributed to this player', (
@@ -311,7 +316,7 @@ void main() {
       useLargeViewport(tester);
       final env = await adEnv(
         balance: 200,
-        packs: testSparkPacks(),
+        sellsUnlock: true,
         gateway: FakeAdsGateway(consentState: AdConsentState.required)
           ..consentOutcome = AdConsentOutcome.refused,
       );
@@ -331,10 +336,10 @@ void main() {
       expect(env.adsGateway.showCalls, 0);
 
       // And the rest of the shop is exactly what it was: the cosmetics, the
-      // earning panel, the wallet and the packs.
+      // earning panel, the wallet and the one-time unlock.
       expect(find.text(en.t('shop.earnHint')), findsWidgets);
-      await scrollTo(tester, headingText(en.t('shop.packsTitle')));
-      expect(headingText(en.t('shop.packsTitle')), findsOneWidget);
+      await scrollTo(tester, headingText(en.t('shop.unlockTitle')));
+      expect(headingText(en.t('shop.unlockTitle')), findsOneWidget);
       expect(env.shop.balance, 200);
       // The game is playable: a cosmetic can still be bought and worn.
       final bought = await env.shop.buy('ball.comet');

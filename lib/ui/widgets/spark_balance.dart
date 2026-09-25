@@ -99,12 +99,56 @@ class SparkAmount extends StatelessWidget {
   }
 }
 
+/// "Everything unlocked": what a player who bought the one-time unlock (SPEC §4.9)
+/// sees where the wallet used to be.
+///
+/// It replaces the figure rather than sitting next to it. A balance is a question
+/// — *how close am I to the next look* — and that question has no answer once every
+/// look is owned, so the number is not merely redundant, it invites a question the
+/// app cannot answer. The wallet is untouched underneath: the server keeps
+/// crediting every run, so if a refund ever revoked the unlock the balance comes
+/// back with everything it earned in the meantime.
+class PremiumBadge extends StatelessWidget {
+  const PremiumBadge({super.key, this.fontSize = 13});
+
+  final double fontSize;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = GameTheme.of(context);
+    final s = Strings.of(context);
+    return Semantics(
+      label: s.t('shop.premiumBadge'),
+      excludeSemantics: true,
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(Icons.check_circle, size: fontSize + 3, color: theme.success),
+          const SizedBox(width: 5),
+          Text(
+            s.t('shop.premiumBadge'),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+              color: theme.textPrimary,
+              fontSize: fontSize,
+              fontWeight: FontWeight.w900,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 /// The wallet as the shop's app bar shows it: the glyph, the figure, and nothing
 /// else.
 ///
 /// Renders a dash while the balance is unknown — a wallet nobody has asked the
 /// server about is not a wallet holding zero, and printing "0" would be a claim
-/// this app is not entitled to make.
+/// this app is not entitled to make. Renders [PremiumBadge] instead of any figure
+/// once the player has bought the unlock (SPEC §4.9), because the figure then has
+/// nothing left to buy.
 class SparkBalance extends StatelessWidget {
   const SparkBalance({super.key, this.fontSize = 16});
 
@@ -114,6 +158,9 @@ class SparkBalance extends StatelessWidget {
   Widget build(BuildContext context) {
     final shop = context.watch<ShopService>();
     final theme = GameTheme.of(context);
+    if (!shop.snapshot.showsBalance) {
+      return PremiumBadge(fontSize: fontSize - 3);
+    }
     if (!shop.balanceKnown) {
       return Row(
         mainAxisSize: MainAxisSize.min,
@@ -150,6 +197,10 @@ class ShopEntryCard extends StatelessWidget {
     final theme = GameTheme.of(context);
     final s = Strings.of(context);
     final shop = context.watch<ShopService>();
+    // A player who bought the unlock (SPEC §4.9) is shown what they have rather
+    // than a wallet with nothing to spend on: the same rule the shop's own app bar
+    // follows, so the two never disagree.
+    final premium = !shop.snapshot.showsBalance;
     // The gesture outside, the row's own text excluded inside: one announcement
     // ("Shop, 240 sparks") that can still be activated.
     return GestureDetector(
@@ -157,16 +208,21 @@ class ShopEntryCard extends StatelessWidget {
       behavior: HitTestBehavior.opaque,
       child: Semantics(
         button: true,
-        label: shop.balanceKnown
+        label: premium
+            ? '${s.t('shop.title')}, ${s.t('shop.premiumBadge')}'
+            : shop.balanceKnown
             ? '${s.t('shop.title')}, ${s.sparks(shop.balance)}'
             : s.t('shop.title'),
         child: ExcludeSemantics(
           child: NeonPanel(
-            color: theme.star,
+            color: premium ? theme.success : theme.star,
             padding: const EdgeInsets.fromLTRB(16, 12, 12, 12),
             child: Row(
               children: [
-                SparkIcon(size: 22, color: theme.star),
+                if (premium)
+                  Icon(Icons.check_circle, size: 22, color: theme.success)
+                else
+                  SparkIcon(size: 22, color: theme.star),
                 const SizedBox(width: 10),
                 Expanded(
                   child: Column(
@@ -174,8 +230,12 @@ class ShopEntryCard extends StatelessWidget {
                     mainAxisSize: MainAxisSize.min,
                     children: [
                       // The figure leads: it is what the player came to glance at.
+                      // Unless there is nothing left to buy, and then what they
+                      // have leads instead.
                       Text(
-                        shop.balanceKnown
+                        premium
+                            ? s.t('shop.premiumBadge')
+                            : shop.balanceKnown
                             ? s.sparks(shop.balance)
                             : s.t('currency.name'),
                         maxLines: 1,
@@ -188,7 +248,7 @@ class ShopEntryCard extends StatelessWidget {
                       ),
                       const SizedBox(height: 2),
                       Text(
-                        shop.balanceKnown
+                        premium || shop.balanceKnown
                             ? s.t('shop.tagline')
                             : s.t('shop.balanceUnknown'),
                         maxLines: 2,
@@ -201,7 +261,7 @@ class ShopEntryCard extends StatelessWidget {
                 Text(
                   theme.heading(s.t('shop.open')),
                   style: TextStyle(
-                    color: theme.star,
+                    color: premium ? theme.success : theme.star,
                     fontSize: 13,
                     fontWeight: FontWeight.w900,
                     letterSpacing: theme.headingCase == HeadingCase.upper
@@ -209,7 +269,11 @@ class ShopEntryCard extends StatelessWidget {
                         : 0,
                   ),
                 ),
-                Icon(Icons.chevron_right, color: theme.star, size: 20),
+                Icon(
+                  Icons.chevron_right,
+                  color: premium ? theme.success : theme.star,
+                  size: 20,
+                ),
               ],
             ),
           ),

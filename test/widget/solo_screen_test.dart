@@ -177,6 +177,65 @@ void main() {
     await tester.pumpWidget(const SizedBox());
   });
 
+  // SPEC 4.9: one rule across the app — a Spark figure appears where it can be
+  // acted on. A player who bought the unlock owns everything sparks could buy, so
+  // the run's reward chip is not shown to them. The server still credits it, and a
+  // revoked entitlement brings the figure back with everything earned meanwhile.
+  testWidgets('a run by a player who bought the unlock shows no spark chip', (
+    tester,
+  ) async {
+    useTallPhone(tester);
+    final env = await createTestEnv(
+      premium: true,
+      secrets: FakeSecretStore.withCredentials(testCredentials(1)),
+    );
+    env.api.profile = PlayerProfile(id: testPlayerId(1), games: 1);
+    env.api.shopBalance = 124;
+    env.api.shopEarnedToday = 200;
+    env.api.shopDailyCap = 200;
+    env.api.submitResult = SubmitResult.accepted(
+      id: 'id-1',
+      score: 2400,
+      rank: 3,
+      playerId: testPlayerId(1),
+      tokens: 24,
+      tokenBalance: 124,
+    );
+
+    await tester.pumpWidget(wrapApp(env, const SoloScreen()));
+    await tester.tap(find.text('TAP TO START').last);
+    for (var i = 0; i < 6000 && env.api.submitCalls == 0; i++) {
+      await tester.pump(const Duration(milliseconds: 16));
+    }
+    expect(env.api.submitCalls, 1, reason: 'the game never ended');
+    await pumpFrames(tester, 12);
+
+    expect(find.text('+24'), findsNothing);
+    expect(
+      find.textContaining('resets at midnight UTC'),
+      findsNothing,
+      reason:
+          'an allowance with nothing to spend it on is not worth a sentence',
+    );
+    // The result itself is exactly where it was: the run still happened, and it
+    // still says so.
+    expect(
+      find.byWidgetPredicate(
+        (w) => w is Text && (w.data == 'GAME OVER' || w.data == 'NEW BEST!'),
+      ),
+      findsOneWidget,
+    );
+    expect(find.textContaining('Best:'), findsOneWidget);
+    expect(
+      env.shop.balance,
+      124,
+      reason: 'the server credited it; only the readout is gone',
+    );
+    expect(tester.takeException(), isNull);
+
+    await tester.pumpWidget(const SizedBox());
+  });
+
   testWidgets('a run that earned nothing because of the daily cap says so', (
     tester,
   ) async {

@@ -327,50 +327,61 @@ class Strings {
     'shop.updateApp':
         'There is newer content than this version of the app can draw.',
     'shop.balanceUnknown': 'Play a run to start earning',
-    // Spark packs — buying Sparks with real money (SPEC §4.9).
+    // The one-time unlock — one non-consumable purchase (SPEC §4.9).
     //
-    // The tone is the product decision: the packs are a shortcut, not the point,
-    // so nothing here urges, compares, counts down or calls anything a deal. The
-    // section says what it is once, and the prices come from the store.
-    'pack.small': 'Handful',
-    'pack.medium': 'Pocketful',
-    'pack.large': 'Sackful',
-    'shop.packsTitle': 'Buy sparks',
-    'shop.packsHint':
-        'A shortcut, nothing more. Every spark here is also earned by playing, '
-        'and nothing in the game is behind a payment.',
-    'shop.packsAmount': '{sparks} sparks',
-    'shop.packsStoreSilent':
-        'The store is not answering right now, so there are no prices to show. '
+    // The tone is the product decision: the unlock is a shortcut and a
+    // convenience, not the point of the game, so nothing here urges, compares,
+    // counts down or calls anything a deal. There is no second tier to be better
+    // than, and no price in this table — the price is the store's, printed
+    // verbatim from whatever StoreKit or Google Play hands the app.
+    'unlock.full': 'Unlock everything',
+    'shop.unlockTitle': 'One-time unlock',
+    'shop.unlockPerk.now': 'Every look, ball and paddle in the shop.',
+    'shop.unlockPerk.later': 'And every one added later, at no extra cost.',
+    'shop.unlockPerk.ads': 'No ads, ever.',
+    'shop.unlockButton': 'UNLOCK',
+    'shop.unlockFree':
+        'Paid once, and that is all. Everything here is earned by playing too — '
+        'this just skips the waiting.',
+    'shop.unlockStoreSilent':
+        'The store is not answering right now, so there is no price to show. '
         'Playing still earns sparks.',
-    'shop.packsPriceMissing': 'Not available here',
-    'shop.packBought': 'Paid — {sparks} added. You now have {balance}.',
-    'shop.packWaiting':
-        'Paid. Your sparks are on their way — they land in a moment, even if '
-        'you close the game.',
-    'shop.packPending':
-        'The payment is waiting for approval. Your sparks arrive as soon as it '
+    'shop.unlockDone': 'Everything is unlocked. Enjoy.',
+    'shop.unlockWaiting':
+        'Paid. It unlocks in a moment — even if you close the game.',
+    'shop.unlockPending':
+        'The payment is waiting for approval. Everything unlocks as soon as it '
         'goes through, even if the game is closed.',
-    'shop.packNotAllowed': 'This device does not allow purchases.',
-    'shop.packStoreDown':
+    'shop.unlockNotAllowed': 'This device does not allow purchases.',
+    'shop.unlockStoreDown':
         'The store did not answer. Nothing was charged — try again later.',
-    'shop.packOffline': 'No connection. Nothing was charged.',
-    'shop.packFailed': 'The purchase did not go through. Nothing was charged.',
-    // Restore purchases (SPEC §4.9). The honest explanation, because the button
-    // does not do what most people expect and the reason is good.
+    'shop.unlockOffline': 'No connection. Nothing was charged.',
+    'shop.unlockFailed':
+        'The purchase did not go through. Nothing was charged.',
+    // What a player who has bought it sees, everywhere a balance used to be. Kept
+    // to one word: it replaces a figure in an app bar, on a 320 pt phone, at 1.6
+    // text scale.
+    'shop.premiumBadge': 'Unlocked',
+    'shop.unlockedTitle': 'Your purchase',
+    'shop.unlockedHeading': 'Everything is unlocked',
+    'shop.unlockedBody':
+        'Every look, ball and paddle is yours — including the ones added later — '
+        'and there are no ads. That is the whole of it. Thank you.',
+    // Restore purchases (SPEC §4.9). The unlock is a non-consumable, so this is a
+    // real feature and the sentence can simply say when to use it.
     'shop.restore': 'RESTORE PURCHASES',
     'shop.restoreHint':
-        'Spark packs are spent, so there is nothing to re-download. Your sparks '
-        'live on your Arco player, not on this phone — sign in to carry them to '
-        'a new one. This checks the store for a payment that never arrived.',
-    'shop.restoreCredited': 'Found a payment — {sparks} added.',
+        'Bought the unlock before, on this phone or another one? This asks the '
+        'store for it and puts it back. Safe to tap more than once.',
+    'shop.restoreDone': 'Restored — everything is unlocked again.',
     'shop.restoreNothing':
-        'Nothing left to add. Your sparks are on your Arco player.',
+        'No purchase found for this store account. If you paid with a different '
+        'Apple or Google account, sign in to that one and try again.',
     'shop.restoreFailed': 'Could not reach the store. Try again later.',
     // Rewarded ads that pay Sparks (SPEC §4.10).
     //
     // The tone is the product decision again, and the rule is stronger than for
-    // the packs: an ad is something the player gives us — half a minute of their
+    // the unlock: an ad is something the player gives us — half a minute of their
     // attention — so it is offered once, quietly, with what it pays stated plainly
     // and no suggestion that anything is waiting behind it. Nothing here urges,
     // counts down, or calls watching an ad a reward for anything but the time it
@@ -682,40 +693,46 @@ class Strings {
     'shop.updateApp':
         'Są nowsze rzeczy, niż ta wersja aplikacji potrafi narysować.',
     'shop.balanceUnknown': 'Zagraj, aby zacząć zdobywać',
-    // Paczki iskier (SPEC §4.9). Liczebnik „iskry / iskier” odmienia
-    // [Strings.sparks]; te teksty używają go tam, gdzie pojawia się liczba.
-    'pack.small': 'Garść',
-    'pack.medium': 'Kieszeń',
-    'pack.large': 'Worek',
-    'shop.packsTitle': 'Kup iskry',
-    'shop.packsHint':
-        'To tylko skrót. Każdą iskrę stąd zdobędziesz też grą, a nic w grze nie '
-        'jest zamknięte za opłatą.',
-    'shop.packsAmount': '{sparks} iskier',
-    'shop.packsStoreSilent':
-        'Sklep teraz nie odpowiada, więc nie ma czego wycenić. Grą zdobywasz '
-        'iskry tak samo.',
-    'shop.packsPriceMissing': 'Niedostępne tutaj',
-    'shop.packBought': 'Zapłacone — dodano {sparks}. Masz teraz {balance}.',
-    'shop.packWaiting':
-        'Zapłacone. Iskry są właśnie doliczane — będą za moment, nawet jeśli '
-        'zamkniesz grę.',
-    'shop.packPending':
-        'Płatność czeka na potwierdzenie. Iskry pojawią się, gdy przejdzie — '
-        'nawet przy zamkniętej grze.',
-    'shop.packNotAllowed': 'To urządzenie nie pozwala na zakupy.',
-    'shop.packStoreDown':
+    // Jednorazowe odblokowanie (SPEC §4.9): jeden zakup, bez ceny w tej tabeli —
+    // cenę podaje sklep urządzenia i wyświetlamy ją dosłownie.
+    'unlock.full': 'Odblokuj wszystko',
+    'shop.unlockTitle': 'Jednorazowy zakup',
+    'shop.unlockPerk.now': 'Wszystkie motywy, piłki i paletki ze sklepu.',
+    'shop.unlockPerk.later': 'I każde dodane później, bez dopłat.',
+    'shop.unlockPerk.ads': 'Żadnych reklam, nigdy.',
+    'shop.unlockButton': 'ODBLOKUJ',
+    'shop.unlockFree':
+        'Płacisz raz i na tym koniec. Wszystko tutaj zdobywasz też grą — to '
+        'skraca czekanie i nic więcej.',
+    'shop.unlockStoreSilent':
+        'Sklep teraz nie odpowiada, więc nie ma ceny do pokazania. Grając nadal '
+        'zdobywasz iskry.',
+    'shop.unlockDone': 'Wszystko odblokowane. Baw się dobrze.',
+    'shop.unlockWaiting':
+        'Zapłacone. Odblokuje się za moment — nawet jeśli zamkniesz grę.',
+    'shop.unlockPending':
+        'Płatność czeka na zatwierdzenie. Wszystko odblokuje się, gdy przejdzie '
+        '— nawet przy zamkniętej grze.',
+    'shop.unlockNotAllowed': 'To urządzenie nie pozwala na zakupy.',
+    'shop.unlockStoreDown':
         'Sklep nie odpowiedział. Nic nie zostało pobrane — spróbuj później.',
-    'shop.packOffline': 'Brak połączenia. Nic nie zostało pobrane.',
-    'shop.packFailed': 'Zakup nie doszedł do skutku. Nic nie zostało pobrane.',
+    'shop.unlockOffline': 'Brak połączenia. Nic nie zostało pobrane.',
+    'shop.unlockFailed':
+        'Zakup nie doszedł do skutku. Nic nie zostało pobrane.',
+    'shop.premiumBadge': 'Odblokowane',
+    'shop.unlockedTitle': 'Twój zakup',
+    'shop.unlockedHeading': 'Wszystko odblokowane',
+    'shop.unlockedBody':
+        'Każdy motyw, każda piłka i każda paletka są Twoje — również te dodane '
+        'później — i nie ma żadnych reklam. To wszystko. Dziękujemy.',
     'shop.restore': 'PRZYWRÓĆ ZAKUPY',
     'shop.restoreHint':
-        'Paczki iskier się zużywają, więc nie ma czego pobrać ponownie. Twoje '
-        'iskry są na koncie Arco, nie w telefonie — zaloguj się, aby przenieść '
-        'je na nowy. To sprawdza w sklepie płatność, która nie dotarła.',
-    'shop.restoreCredited': 'Znaleziono płatność — dodano {sparks}.',
+        'Kupiłeś już odblokowanie — na tym telefonie albo na innym? To pyta o '
+        'nie sklep i przywraca zakup. Można spokojnie dotknąć kilka razy.',
+    'shop.restoreDone': 'Przywrócone — wszystko jest znowu odblokowane.',
     'shop.restoreNothing':
-        'Nie ma nic do doliczenia. Twoje iskry są na koncie Arco.',
+        'Nie znaleziono zakupu na tym koncie sklepu. Jeśli płaciłeś z innego '
+        'konta Apple lub Google, zaloguj się na nie i spróbuj ponownie.',
     'shop.restoreFailed': 'Nie udało się połączyć ze sklepem. Spróbuj później.',
     // Reklamy za iskry (SPEC §4.10). Liczebnik odmienia [Strings.sparks].
     'ads.title': 'Z reklam dziś',

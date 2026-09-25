@@ -364,6 +364,48 @@ void main() {
     },
   );
 
+  // SPEC 4.9: the one-time unlock covers every cosmetic, so the picker in Settings
+  // has to honour it as well as the shop does. Drawing a lock over something the
+  // player has paid for is the one mistake worth a test of its own.
+  testWidgets('every look is unlocked for a player who bought the unlock', (
+    tester,
+  ) async {
+    tester.view.physicalSize = const Size(1400, 2000);
+    tester.view.devicePixelRatio = 2.0;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final env = await createTestEnv(
+      premium: true,
+      secrets: FakeSecretStore.withCredentials(testCredentials(1)),
+    );
+    env.api.profile = PlayerProfile(id: testPlayerId(1), games: 1);
+    await tester.pumpWidget(wrapApp(env, const SettingsScreen()));
+    await tester.pump();
+
+    expect(find.byType(ThemePreview), findsNWidgets(GameThemes.themeCount));
+    expect(
+      find.byType(LockBadge),
+      findsNothing,
+      reason: 'nothing is locked for somebody who bought everything',
+    );
+
+    // And a paid look applies on one tap, with no trip to the shop in between.
+    await tester.tap(find.text('Glass'));
+    for (var i = 0; i < 8; i++) {
+      await tester.pump(const Duration(milliseconds: 40));
+    }
+    expect(env.settings.themeId, ThemeId.glass);
+    expect(env.api.shopEquips, [
+      {'theme': 'theme.glass'},
+    ]);
+    expect(
+      env.api.shopBuys,
+      isEmpty,
+      reason: 'it is already theirs; there is nothing to buy',
+    );
+    expect(tester.takeException(), isNull);
+  });
+
   testWidgets('an owned look applies and is stored on the server', (
     tester,
   ) async {
