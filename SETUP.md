@@ -7,12 +7,41 @@ touch an app store.
 Legend: **[play]** needed to play with other people over the internet · **[store]** needed to publish ·
 **[money]** needed only once you sell something.
 
+## Where this stands
+
+| section | state |
+|---|---|
+| 1. Server online | **done** — https://arco.fly.dev, Frankfurt, volume-backed, snapshots on |
+| 2-5, 8. Developer accounts and sign-in | not started; the app works without them |
+| 6, 7. Store listing, icon | not started |
+| 9, 10. Unlock and ads | not started; both features are built and switched off |
+| 12.1 Backups | **partly done** — Fly made the volume with scheduled snapshots; a restore has never been rehearsed |
+| 12.2 Monitoring, 12.4 Support page, 12.5 Age rating | not started |
+| 12.6 Code off the laptop | **done** — github.com/tymonq19/ARCO |
+
+**Nothing below blocks playing.** The server is live, so a duel between two phones works today. Everything
+that remains is about publishing, selling, or not losing things later.
+
 ---
 
-## 1. Put the server online — [play]
+## 1. Put the server online — [play] — DONE
 
 Duels and the global leaderboard both talk to your own server. Until it is reachable from the internet, the
 game works only on your own machine.
+
+**This is already done.** What exists now:
+
+| | |
+|---|---|
+| address | `https://arco.fly.dev` |
+| region | `fra` (Frankfurt) — Fly has no Warsaw region; this is the closest, about 20 ms from Warsaw |
+| machine | one, `auto_stop_machines = "off"` so duel rooms in memory are never dropped |
+| volume | `arco_data`, 1 GB, encrypted, mounted at `/app/data`, scheduled snapshots with 5-day retention |
+| verified | `/api/health` answers, a recorded solo replay was accepted and listed, a tampered score was refused, and a duel ran over two WebSockets |
+
+The configuration lives in `fly.toml` and is committed. Redeploy after a code change with `fly deploy` from
+the repository root. The steps below are kept as the record of how it was done and what to repeat if you ever
+move hosts.
 
 1. Install the Fly.io command line tool and sign in. A card is required even on the free-scale plan.
 2. From the repository root, create the app. The Dockerfile is already correct, so accept it when asked.
@@ -656,12 +685,12 @@ something later.
 The server's volume holds the leaderboard, the wallets, the purchase ledger and the account links. If it is
 lost, so are purchases people paid real money for, and that becomes a refund problem rather than an outage.
 
-1. Turn on Fly.io volume snapshots and set the retention you want:
+1. Snapshots are **already on**: Fly created `arco_data` with scheduled snapshots and 5-day retention.
+   Confirm rather than assume, and lengthen the retention if you want more room:
    ```bash
    fly volumes list
-   fly volumes snapshots list <volume-id>
+   fly volumes snapshots list vol_vgnmm193mmqx5nj4
    ```
-   Fly takes daily snapshots by default; confirm it for your volume rather than assuming.
 2. **Restore one at least once, before you need to.** A backup nobody has restored is a guess.
    ```bash
    fly volumes snapshots create <volume-id>       # take one on demand
@@ -705,7 +734,11 @@ Pick one, deliberately:
 
 Answering "directed at children" while serving ads is the version that gets an app pulled.
 
-### 12.6 Keep the code somewhere other than your laptop
+### 12.6 Keep the code somewhere other than your laptop — DONE
 
-The repository has no commits yet. Everything here exists on one disk. Commit it and push it to a private
-remote before anything else on this page.
+The repository is pushed to **github.com/tymonq19/ARCO**. Keep pushing after each change; the point is that a
+dead laptop costs you a day, not the project.
+
+One decision left: that repository is **public**. There are no secrets in it, and the leaderboard's
+cheat-resistance does not depend on the code being private, but anyone can build and publish their own copy of
+a game you intend to sell. Switching it to private is one click in the repository settings, under Danger Zone.
