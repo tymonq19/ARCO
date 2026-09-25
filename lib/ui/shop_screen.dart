@@ -18,6 +18,8 @@ library;
 
 import 'dart:async';
 
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
@@ -54,6 +56,10 @@ class ShopScreen extends StatefulWidget {
 
   /// Narrowest a card may get before a row of three stops being worth it.
   static const double minCardWidth = 132;
+
+  /// Widest the content column ever gets: four cards at their drawn size plus
+  /// the gaps between them, plus the horizontal padding.
+  static const double maxContentWidth = 4 * maxCardWidth + 3 * cardGap + 32;
 
   @override
   State<ShopScreen> createState() => _ShopScreenState();
@@ -316,16 +322,26 @@ class _ShopScreenState extends State<ShopScreen> with WidgetsBindingObserver {
           child: LayoutBuilder(
             builder: (context, constraints) {
               const padding = EdgeInsets.fromLTRB(16, 4, 16, 48);
-              final available = constraints.maxWidth - padding.horizontal;
-              return ListView(
-                padding: padding,
-                // The whole screen is three sections of cards and one panel, and
-                // every card is a real arena painting: keeping them laid out
-                // while the player scrolls costs a little memory and saves
-                // re-recording twelve pictures, exactly as the Settings list
-                // does with its four theme previews.
-                cacheExtent: 1400,
-                children: _body(s, theme, shop, snapshot, available),
+              // The content is centred inside a readable column rather than
+              // stretched: four cards at their drawn size plus their gaps is
+              // as wide as this screen ever needs to be.
+              final width = math.min(
+                constraints.maxWidth,
+                ShopScreen.maxContentWidth,
+              );
+              final available = width - padding.horizontal;
+              return _centred(
+                width,
+                ListView(
+                  padding: padding,
+                  // The whole screen is three sections of cards and one panel,
+                  // and every card is a real arena painting: keeping them laid
+                  // out while the player scrolls costs a little memory and
+                  // saves re-recording twelve pictures, exactly as the Settings
+                  // list does with its four theme previews.
+                  cacheExtent: 1400,
+                  children: _body(s, theme, shop, snapshot, available),
+                ),
               );
             },
           ),
@@ -403,6 +419,11 @@ class _ShopScreenState extends State<ShopScreen> with WidgetsBindingObserver {
 
   /// One section's cards, wrapped so they reflow instead of overflowing when the
   /// text scale or the phone makes them wider.
+  /// Keeps [child] in a column of [width], centred, when the screen is wider.
+  Widget _centred(double width, Widget child) => Center(
+    child: SizedBox(width: width, child: child),
+  );
+
   Widget _grid(
     Strings s,
     ShopSnapshot snapshot,
@@ -410,6 +431,10 @@ class _ShopScreenState extends State<ShopScreen> with WidgetsBindingObserver {
     double cardWidth,
   ) {
     return Wrap(
+      // Cards are capped at `maxCardWidth`, so a row rarely fills the width
+      // exactly. Left-aligned, every leftover pixel piled up on the right and
+      // the whole shop looked pinned to the left edge.
+      alignment: WrapAlignment.center,
       spacing: ShopScreen.cardGap,
       runSpacing: 16,
       children: [
