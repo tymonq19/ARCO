@@ -6,3 +6,6 @@
 // the plugin registrant does not verify without this. See ios/Podfile, which sets
 // the same flag for the pods, and SETUP.md §10.
 CLANG_ALLOW_NON_MODULAR_INCLUDES_IN_FRAMEWORK_MODULES=YES
+
+// Signing team for this project (Apple Developer, paid).
+DEVELOPMENT_TEAM=R7B3K2UQLG
