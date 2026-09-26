@@ -13,6 +13,7 @@ import 'leaderboard_screen.dart';
 import 'settings_screen.dart';
 import 'shop_screen.dart';
 import 'solo_screen.dart';
+import 'widgets/menu_ball_backdrop.dart';
 import 'widgets/neon_button.dart';
 import 'widgets/neon_panel.dart';
 import 'widgets/spark_balance.dart';
@@ -117,6 +118,13 @@ class _HomeScreenState extends State<HomeScreen> {
     final nameValid = normalizeName(_name.text) != null;
     return Scaffold(
       body: NeonBackground(
+        // The title screen alone (SPEC §5.1): the equipped ball drifts behind
+        // the menu, leaning the way the phone is leaned. Nowhere else — on
+        // Settings, the shop, the leaderboard and the duel lobby the player is
+        // reading, and movement behind text is a nuisance there rather than a
+        // welcome. It stops itself when the app is backgrounded and when any of
+        // those screens is pushed over this one.
+        backdrop: const MenuBallBackdrop(),
         child: SafeArea(
           child: LayoutBuilder(
             builder: (context, constraints) => SingleChildScrollView(

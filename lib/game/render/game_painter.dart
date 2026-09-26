@@ -408,7 +408,7 @@ class GamePainter extends CustomPainter {
     // The true collision radius, and the direction of travel in screen space
     // (y flipped, and turned around for duel player 1). A skin may decorate
     // outside the radius but never draw a body that disagrees with it.
-    final r = ballRadius * geometry.scale;
+    final r = _ballArt.bodyRadius;
     final vx = ball.vx;
     final vy = ball.vy;
     final speed = math.sqrt(vx * vx + vy * vy);

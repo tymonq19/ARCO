@@ -113,6 +113,16 @@ class BallFx {
     if (_count < FxState.trailLength) _count++;
   }
 
+  /// Places the ball at ([px], [py]) and feeds the trail, with no [Ball] to
+  /// follow and nothing to smooth — for a source that runs its own motion (the
+  /// decorative ball behind the main menu).
+  void followPoint(double px, double py) {
+    live = true;
+    x = px;
+    y = py;
+    _push(px, py);
+  }
+
   /// Drops the path but keeps the position (a life lost, a snap).
   void clearTrail() => _count = 0;
 
@@ -288,6 +298,18 @@ class FxState {
   void trackBall(Ball ball, {bool smooth = true}) {
     ballCount = 1;
     balls[0].follow(ball, smooth: smooth, smoothing: ballSmoothing);
+    for (var i = 1; i < maxBalls; i++) {
+      balls[i].reset();
+    }
+  }
+
+  /// Follows a bare point as ball 0 and releases the rest, for a caller that has
+  /// no [Ball] at all: the decorative ball behind the main menu runs its own
+  /// handful of lines of physics and never touches the simulation, but it still
+  /// wants the real [BallArt] — which reads its wake from here — to draw it.
+  void trackPoint(double x, double y) {
+    ballCount = 1;
+    balls[0].followPoint(x, y);
     for (var i = 1; i < maxBalls; i++) {
       balls[i].reset();
     }

@@ -182,6 +182,16 @@ class _SettingsScreenState extends State<SettingsScreen> {
                         if (v) haptics.selection();
                       },
                     ),
+                    // The drifting ball behind the title screen. Off means off:
+                    // no ticker and no accelerometer (see `MenuBallBackdrop`),
+                    // which is why this is a setting and not a style.
+                    SwitchListTile(
+                      value: settings.menuMotion,
+                      title: Text(s.t('settings.menuMotion')),
+                      subtitle: Text(s.t('settings.menuMotionDesc')),
+                      secondary: const Icon(Icons.motion_photos_on),
+                      onChanged: (v) => settings.menuMotion = v,
+                    ),
                   ],
                 ),
               ),

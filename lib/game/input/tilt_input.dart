@@ -3,7 +3,7 @@ import 'dart:math' as math;
 
 import 'package:arco_core/arco_core.dart';
 import 'package:flutter/foundation.dart';
-import 'package:flutter/widgets.dart' show Orientation;
+import 'package:flutter/widgets.dart' show Offset, Orientation;
 import 'package:sensors_plus/sensors_plus.dart';
 
 import '../../app/settings.dart';
@@ -18,8 +18,11 @@ import 'input_controller.dart';
 class TiltInput extends ChangeNotifier
     with IdempotentDispose
     implements InputController {
-  TiltInput({required this.settings, Stream<AccelerometerEvent>? source})
-    : _source = source {
+  TiltInput({
+    required this.settings,
+    Stream<AccelerometerEvent>? source,
+    this.samplingPeriod = SensorInterval.gameInterval,
+  }) : _source = source {
     _subscribe();
   }
 
@@ -27,7 +30,16 @@ class TiltInput extends ChangeNotifier
   static const double baseMaxRoll = 0.35;
   static const double deadZone = 0.04;
 
+  /// Standard gravity, for reading the share of it that lies in the screen
+  /// plane (see [screenGravity]).
+  static const double gravity = 9.80665;
+
   final Settings settings;
+
+  /// How often the platform is asked for a sample. The paddle needs every one
+  /// the sensor will give it; a decorative background reads the same vector at a
+  /// fraction of the rate, which is a fraction of the battery.
+  final Duration samplingPeriod;
 
   /// Stream to sample; null means the real `sensors_plus` one. Kept so
   /// [resume] can open the same source again after [pause].
@@ -50,8 +62,7 @@ class TiltInput extends ChangeNotifier
   void _subscribe() {
     try {
       final stream =
-          _source ??
-          accelerometerEventStream(samplingPeriod: SensorInterval.gameInterval);
+          _source ?? accelerometerEventStream(samplingPeriod: samplingPeriod);
       _sub = stream.listen(
         _onEvent,
         onError: (Object e) {
@@ -108,6 +119,28 @@ class TiltInput extends ChangeNotifier
     if (r > math.pi) r -= 2 * math.pi;
     if (r <= -math.pi) r += 2 * math.pi;
     return r;
+  }
+
+  /// Which way gravity pulls in **screen** space — x to the right, y down —
+  /// scaled by how much of it lies in the screen plane: length 1 is a phone held
+  /// upright, 0 a phone lying flat on a table. Null until the first sample, and
+  /// null forever on a platform that has no accelerometer.
+  ///
+  /// The same filtered vector [current] reads, turned into a direction instead of
+  /// a paddle move, so there is one sensor path and one orientation convention in
+  /// the app rather than two. [rollFor] measures the accelerometer vector's
+  /// in-plane angle from screen "up"; at rest that vector points *away* from
+  /// gravity, so screen-down is `(-sin roll, cos roll)`.
+  ///
+  /// [rawRoll], not [roll]: the calibrated baseline is where *this player* holds
+  /// the phone when they mean "level", which is the right zero for a paddle and
+  /// the wrong one for gravity. Anything falling should fall the way the world
+  /// does.
+  Offset? get screenGravity {
+    if (!_hasSample) return null;
+    final share = (math.sqrt(_ax * _ax + _ay * _ay) / gravity).clamp(0.0, 1.0);
+    final r = rawRoll;
+    return Offset(-math.sin(r), math.cos(r)) * share;
   }
 
   /// Normalized deflection −1..1 for the live preview in Settings.

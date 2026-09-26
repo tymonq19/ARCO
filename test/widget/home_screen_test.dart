@@ -199,7 +199,9 @@ void main() {
   });
 
   testWidgets('navigates to a named route', (tester) async {
-    useIPhoneSe(tester);
+    // Tall enough that the CONTROLS heading is on screen without scrolling: an
+    // iPhone SE now stops just above it.
+    useTallPhone(tester);
     final env = await createTestEnv();
     await tester.pumpWidget(
       wrapApp(

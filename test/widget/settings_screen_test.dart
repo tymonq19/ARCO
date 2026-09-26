@@ -114,6 +114,7 @@ void main() {
     expect(listText('LANGUAGE'), findsOneWidget);
     expect(listText('Sound'), findsOneWidget);
     expect(listText('Haptics'), findsOneWidget);
+    expect(listText('Menu motion'), findsOneWidget);
     expect(listText('CONTROLS'), findsOneWidget);
     expect(listText('Joystick'), findsOneWidget);
     expect(listText('Tilt'), findsOneWidget);
@@ -128,6 +129,33 @@ void main() {
 
     await scrollToBottom(tester);
     expect(find.text('Advanced'), findsOneWidget);
+    expect(tester.takeException(), isNull);
+  });
+
+  // The living background of the title screen. On by default; off means off —
+  // no ticker and no accelerometer (see `test/widget/menu_ball_backdrop_test.dart`).
+  testWidgets('turns the menu background off and on again', (tester) async {
+    useIPhoneSe(tester);
+    final env = await createTestEnv(menuMotion: true);
+    await tester.pumpWidget(wrapApp(env, const SettingsScreen()));
+
+    expect(env.settings.menuMotion, isTrue);
+    expect(
+      listText('Your ball drifts behind the main menu'),
+      findsOneWidget,
+      reason: 'the switch does not say what it turns off',
+    );
+
+    await reveal(tester, listText('Menu motion'));
+    await tester.tap(find.text('Menu motion'));
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(env.settings.menuMotion, isFalse);
+    // Persisted, so it survives a relaunch rather than coming back every time.
+    expect(env.storage.getBool('menuMotion'), isFalse);
+
+    await tester.tap(find.text('Menu motion'));
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(env.settings.menuMotion, isTrue);
     expect(tester.takeException(), isNull);
   });
 

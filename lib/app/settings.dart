@@ -24,6 +24,7 @@ class Settings extends ChangeNotifier {
     );
     _sound = _storage.getBool(_kSound) ?? true;
     _haptics = _storage.getBool(_kHaptics) ?? true;
+    _menuMotion = _storage.getBool(_kMenuMotion) ?? true;
     _controlMode = _enumFromName(
       ControlMode.values,
       _storage.getString(_kControlMode),
@@ -80,6 +81,7 @@ class Settings extends ChangeNotifier {
   static const String _kLanguage = 'language';
   static const String _kSound = 'sound';
   static const String _kHaptics = 'haptics';
+  static const String _kMenuMotion = 'menuMotion';
   static const String _kControlMode = 'controlMode';
   static const String _kTiltSensitivity = 'tiltSensitivity';
   static const String _kTiltBaseline = 'tiltBaseline';
@@ -114,6 +116,7 @@ class Settings extends ChangeNotifier {
   late AppLanguage _language;
   late bool _sound;
   late bool _haptics;
+  late bool _menuMotion;
   late ControlMode _controlMode;
   late double _tiltSensitivity;
   late double _tiltBaseline;
@@ -148,6 +151,22 @@ class Settings extends ChangeNotifier {
     if (v == _haptics) return;
     _haptics = v;
     _storage.setBool(_kHaptics, v);
+    notifyListeners();
+  }
+
+  /// Whether the title screen's background moves: the equipped ball drifting
+  /// behind the menu, leaning the way the phone is leaned.
+  ///
+  /// On by default, because an asleep menu is what this is for. Off is a real
+  /// answer and not a grudging one: movement behind text is unpleasant for some
+  /// people and makes others unwell, and with it off nothing runs and no sensor
+  /// is opened. The platform's own reduced-motion request is honoured on top of
+  /// this without anybody having to find the switch (see `MenuBallBackdrop`).
+  bool get menuMotion => _menuMotion;
+  set menuMotion(bool v) {
+    if (v == _menuMotion) return;
+    _menuMotion = v;
+    _storage.setBool(_kMenuMotion, v);
     notifyListeners();
   }
 

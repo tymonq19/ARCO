@@ -203,9 +203,16 @@ class GlowText extends StatelessWidget {
 /// CRT scanlines where the theme asks for them, so every menu matches the game
 /// view.
 class NeonBackground extends StatelessWidget {
-  const NeonBackground({super.key, required this.child});
+  const NeonBackground({super.key, required this.child, this.backdrop});
 
   final Widget child;
+
+  /// Something to animate between the gradient and the content — the drifting
+  /// ball on the title screen (see `MenuBallBackdrop`). It is laid out over the
+  /// whole screen, painted *under* the theme's grain so it is textured like the
+  /// rest of the backdrop rather than pasted on top of it, and it never takes a
+  /// pointer. Null on every screen the player is there to read.
+  final Widget? backdrop;
 
   @override
   Widget build(BuildContext context) {
@@ -222,6 +229,17 @@ class NeonBackground extends StatelessWidget {
           vignette: theme.vignette,
         ),
         child: body,
+      );
+    }
+    if (backdrop != null) {
+      body = Stack(
+        // The content keeps exactly the constraints it had without a stack under
+        // it: a backdrop must not be able to change a layout.
+        fit: StackFit.passthrough,
+        children: [
+          Positioned.fill(child: backdrop!),
+          body,
+        ],
       );
     }
     return DecoratedBox(

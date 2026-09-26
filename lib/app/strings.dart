@@ -281,6 +281,11 @@ class Strings {
     'settings.langPl': 'Polish',
     'settings.sound': 'Sound',
     'settings.haptics': 'Haptics',
+    // The drifting ball behind the title screen. Named for what it does rather
+    // than for what it is: "menu motion" is the thing somebody who dislikes
+    // movement behind text will look for.
+    'settings.menuMotion': 'Menu motion',
+    'settings.menuMotionDesc': 'Your ball drifts behind the main menu',
     'settings.controls': 'Controls',
     'settings.controlJoystick': 'Joystick',
     'settings.controlTilt': 'Tilt',
@@ -653,6 +658,8 @@ class Strings {
     'settings.langPl': 'Polski',
     'settings.sound': 'Dźwięk',
     'settings.haptics': 'Wibracje',
+    'settings.menuMotion': 'Ruch w menu',
+    'settings.menuMotionDesc': 'Twoja piłka krąży w tle menu głównego',
     'settings.controls': 'Sterowanie',
     'settings.controlJoystick': 'Joystick',
     'settings.controlTilt': 'Przechył telefonu',

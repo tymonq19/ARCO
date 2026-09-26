@@ -25,6 +25,7 @@ library;
 import 'dart:math' as math;
 import 'dart:typed_data';
 
+import 'package:arco_core/arco_core.dart';
 import 'package:flutter/painting.dart';
 
 import '../../app/cosmetics.dart';
@@ -116,6 +117,14 @@ abstract class CosmeticArt {
 abstract class BallArt extends CosmeticArt {
   /// The catalogue item this draws.
   BallSkin get skin;
+
+  /// The radius the solid body is drawn at, in pixels — the ball's collision
+  /// radius at the installed [scale], and the figure [paintBody] is handed.
+  ///
+  /// Stated here so the callers that have no [GameState] to read a ball out of —
+  /// the decorative ball behind the main menu — can size one the same way the
+  /// arena does instead of inventing a radius of their own.
+  double get bodyRadius => ballRadius * scale;
 
   /// The wake behind ball [index], in screen space. Called once per frame before
   /// the body, and only while that ball is live.

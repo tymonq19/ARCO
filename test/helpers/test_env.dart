@@ -113,6 +113,7 @@ Future<TestEnv> createTestEnv({
   Map<String, Object> prefs = const {},
   FakeApiClient? api,
   bool haptics = false,
+  bool menuMotion = false,
   ThemeId? theme,
   String? playerName = 'Tester',
   FakeSecretStore? secrets,
@@ -139,6 +140,12 @@ Future<TestEnv> createTestEnv({
   SharedPreferences.setMockInitialValues({
     'playerName': ?playerName,
     'haptics': haptics,
+    // Off by default, like the haptics above: the title screen's living
+    // background is a [Ticker] that never stops, so with it on `pumpAndSettle`
+    // on any screen that has the menu underneath it can never settle. The tests
+    // that are *about* it ask for it (`menuMotion: true`) and drive frames by
+    // hand; see `test/widget/menu_ball_backdrop_test.dart`.
+    'menuMotion': menuMotion,
     if (theme != null) 'theme': theme.name,
     if (ownedItems.isNotEmpty || balance > 0 || premium)
       'shopCache': jsonEncode(
