@@ -1,7 +1,7 @@
 name: arco
 description: Arco - a circular paddle game for phones, with online duels and a global leaderboard.
 publish_to: 'none'
-version: 1.0.0+2
+version: 1.0.0+3
 
 environment:
   sdk: ^3.11.0
