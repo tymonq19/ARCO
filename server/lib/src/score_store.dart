@@ -45,6 +45,7 @@ enum _Op {
   touchPlayer,
   notePlayerScore,
   playerScores,
+  playerBoards,
   playerCount,
   linkAccount,
   unlinkAccount,
@@ -78,6 +79,7 @@ class _DbRequest {
     this.row,
     this.period = LeaderboardPeriod.all,
     this.limit = 0,
+    this.balls = 1,
     this.now,
     this.score = 0,
     this.player,
@@ -103,6 +105,9 @@ class _DbRequest {
   final ScoreRow? row;
   final LeaderboardPeriod period;
   final int limit;
+
+  /// Ball count of the board a score query is about (SPEC §4.6).
+  final int balls;
   final DateTime? now;
   final int score;
   final PlayerRow? player;
@@ -273,13 +278,14 @@ class ScoreStore {
     await _send(_DbRequest(_nextId++, _Op.insert, row: row));
   }
 
-  /// Top scores of [period], ordered by score desc then createdAt asc, and
-  /// restricted to [country] when one is given (SPEC §4.6).
+  /// Top scores of the [balls] board within [period], ordered by score desc then
+  /// createdAt asc, and restricted to [country] when one is given (SPEC §4.6).
   Future<List<ScoreRow>> topScores({
     LeaderboardPeriod period = LeaderboardPeriod.all,
     int limit = 100,
     DateTime? now,
     String? country,
+    int balls = 1,
   }) async {
     final rows = await _send(
       _DbRequest(
@@ -289,18 +295,20 @@ class ScoreStore {
         limit: limit,
         now: now,
         country: country,
+        balls: balls,
       ),
     );
     return (rows as List<Object?>).cast<ScoreRow>();
   }
 
-  /// `1 + number of scores > [score]` within [period], and within [country]
-  /// when one is given (SPEC §4.6).
+  /// `1 + number of scores > [score]` on the [balls] board within [period], and
+  /// within [country] when one is given (SPEC §4.6).
   Future<int> rank(
     int score, {
     LeaderboardPeriod period = LeaderboardPeriod.all,
     DateTime? now,
     String? country,
+    int balls = 1,
   }) async {
     final value = await _send(
       _DbRequest(
@@ -310,12 +318,13 @@ class ScoreStore {
         period: period,
         now: now,
         country: country,
+        balls: balls,
       ),
     );
     return value as int;
   }
 
-  /// Total number of stored scores.
+  /// Total number of stored scores, across every board.
   Future<int> count() async =>
       await _send(_DbRequest(_nextId++, _Op.count)) as int;
 
@@ -418,12 +427,21 @@ class ScoreStore {
     );
   }
 
-  /// Games submitted, best score and global rank for [id].
-  Future<PlayerStats> playerScores(String id) async {
+  /// Games submitted, best score and rank for [id] on the [balls] board.
+  Future<PlayerStats> playerScores(String id, {int balls = 1}) async {
     final value = await _send(
-      _DbRequest(_nextId++, _Op.playerScores, playerId: id),
+      _DbRequest(_nextId++, _Op.playerScores, playerId: id, balls: balls),
     );
     return value as PlayerStats;
+  }
+
+  /// One [PlayerStats] per board [id] has runs on, in ball-count order
+  /// (SPEC §4.6). Empty when the player has submitted nothing.
+  Future<List<PlayerStats>> playerBoards(String id) async {
+    final rows = await _send(
+      _DbRequest(_nextId++, _Op.playerBoards, playerId: id),
+    );
+    return (rows as List<Object?>).cast<PlayerStats>();
   }
 
   /// Total number of issued players.
@@ -709,6 +727,7 @@ Object? _execute(Db db, _DbRequest request) {
         limit: request.limit,
         now: request.now,
         country: request.country,
+        balls: request.balls,
       );
     case _Op.rank:
       return db.rank(
@@ -716,6 +735,7 @@ Object? _execute(Db db, _DbRequest request) {
         period: request.period,
         now: request.now,
         country: request.country,
+        balls: request.balls,
       );
     case _Op.count:
       return db.count;
@@ -811,7 +831,9 @@ Object? _execute(Db db, _DbRequest request) {
       db.notePlayerScore(request.playerId!, request.name!, request.now!);
       return null;
     case _Op.playerScores:
-      return db.playerScores(request.playerId!);
+      return db.playerScores(request.playerId!, balls: request.balls);
+    case _Op.playerBoards:
+      return db.playerBoards(request.playerId!);
     case _Op.playerCount:
       return db.playerCount;
     case _Op.close:

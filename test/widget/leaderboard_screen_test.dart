@@ -56,6 +56,15 @@ Future<void> _settle(WidgetTester tester) async {
   await tester.pump(const Duration(milliseconds: 50));
 }
 
+/// After a tab tap. The screen refuses to fetch while `indexIsChanging` is
+/// true, so that the strip does not fire a request per frame while it slides;
+/// a 50 ms settle lands inside that animation and sees no request at all.
+Future<void> _settleTab(WidgetTester tester) async {
+  await tester.pump();
+  await tester.pump(const Duration(milliseconds: 400));
+  await tester.pump(const Duration(milliseconds: 50));
+}
+
 void main() {
   testWidgets('lists the entries and highlights own scores', (tester) async {
     useIPhoneSe(tester);
@@ -79,6 +88,119 @@ void main() {
     expect(find.text('(you)'), findsOneWidget);
     expect(find.text('300 s'), findsOneWidget);
     expect(tester.takeException(), isNull);
+  });
+
+  // SPEC 2.3 / 4.6: the ball count is a different game, so it is a different
+  // board. Which one is on screen has to be obvious, switching has to be one tap,
+  // and a player who has never played two balls must not be dropped onto an empty
+  // list.
+  group('the two boards', () {
+    testWidgets('opens on the classic board and names it', (tester) async {
+      useIPhoneSe(tester);
+      final env = await createTestEnv(api: FakeApiClient(entries: _entries()));
+      await tester.pumpWidget(wrapApp(env, const LeaderboardScreen()));
+      await _settle(tester);
+
+      expect(find.text('BOARD'), findsOneWidget);
+      expect(find.text('1 ball'), findsOneWidget);
+      expect(find.text('2 balls'), findsOneWidget);
+      expect(env.api.leaderboardBallCounts, <int>[1]);
+      expect(find.text('Ada'), findsOneWidget);
+    });
+
+    testWidgets('switches boards, keeping the period, and caches each one', (
+      tester,
+    ) async {
+      useIPhoneSe(tester);
+      final api = FakeApiClient(entries: _entries())
+        ..twoBallEntries = [
+          LeaderboardEntry(
+            rank: 1,
+            name: 'Duo',
+            score: 4242,
+            seconds: 120,
+            createdAt: DateTime.utc(2026, 9, 3),
+          ),
+        ];
+      final env = await createTestEnv(api: api);
+      await tester.pumpWidget(wrapApp(env, const LeaderboardScreen()));
+      await _settle(tester);
+
+      // Read this week on the classic board first.
+      await tester.tap(find.text('This week'));
+      await _settleTab(tester);
+      expect(api.leaderboardBallCounts, <int>[1, 1]);
+
+      // Then the same period on the other board.
+      await tester.tap(find.text('2 balls'));
+      await _settleTab(tester);
+      expect(api.leaderboardBallCounts.last, 2);
+      expect(find.text('Duo'), findsOneWidget);
+      expect(find.text('Ada'), findsNothing);
+      // The period the player was reading survived the switch.
+      expect(
+        tester.widget<TabBar>(find.byType(TabBar)).controller!.index,
+        1,
+        reason: 'switching boards must not drop back to all time',
+      );
+
+      // Back again: both boards are cached, so nothing is fetched twice.
+      final calls = api.leaderboardCalls;
+      await tester.tap(find.text('1 ball'));
+      await _settleTab(tester);
+      expect(find.text('Ada'), findsOneWidget);
+      expect(api.leaderboardCalls, calls);
+    });
+
+    testWidgets('opens on the two-ball board only for a player who has played '
+        'it', (tester) async {
+      useIPhoneSe(tester);
+      // The two-ball game is selected but never finished: opening its board would
+      // be opening an empty list.
+      final first = await createTestEnv(
+        prefs: const {'ballCount': 2},
+        api: FakeApiClient(entries: _entries()),
+      );
+      await tester.pumpWidget(wrapApp(first, const LeaderboardScreen()));
+      await _settle(tester);
+      expect(first.api.leaderboardBallCounts, <int>[1]);
+      expect(find.text('Ada'), findsOneWidget);
+
+      // Once a two-ball game has been played, that is the board they came for.
+      final api = FakeApiClient(entries: _entries())
+        ..twoBallEntries = const <LeaderboardEntry>[];
+      final second = await createTestEnv(
+        prefs: const {'ballCount': 2, 'played2': true},
+        api: api,
+      );
+      // Unmount the first screen before the second one goes up. Pumping a new
+      // tree of the same shape only *updates* the existing element, so the
+      // State survives, initState never runs again and the second player's
+      // board is never asked for. An app never swaps its whole provider tree
+      // under a live screen; a test that does has to tear it down by hand.
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pumpWidget(wrapApp(second, const LeaderboardScreen()));
+      await _settle(tester);
+      expect(api.leaderboardBallCounts, <int>[2]);
+      expect(find.text('No scores yet — be the first!'), findsOneWidget);
+    });
+
+    testWidgets('both boards read on a 320-pt phone at a 1.6 text scale', (
+      tester,
+    ) async {
+      useNarrowPhone(tester);
+      final env = await createTestEnv(api: FakeApiClient(entries: _entries()));
+      await tester.pumpWidget(
+        MediaQuery(
+          data: const MediaQueryData(textScaler: TextScaler.linear(1.6)),
+          child: wrapApp(env, const LeaderboardScreen()),
+        ),
+      );
+      await _settle(tester);
+      expect(find.text('1 ball'), findsOneWidget);
+      expect(find.text('2 balls'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    });
   });
 
   testWidgets('keeps the whole Polish period label on a 320-pt phone', (
@@ -341,9 +463,11 @@ class _InvalidCountryApi extends FakeApiClient {
     LeaderboardPeriod period, {
     int limit = 100,
     String? country,
+    int ballCount = minBallCount,
   }) async {
     if (country != null) {
       leaderboardCountries.add(country);
+      leaderboardBallCounts.add(ballCount);
       leaderboardCalls++;
       throw const ApiException(
         ApiErrorKind.badResponse,
@@ -352,6 +476,11 @@ class _InvalidCountryApi extends FakeApiClient {
         errorCode: 'invalid_country',
       );
     }
-    return super.leaderboard(period, limit: limit, country: country);
+    return super.leaderboard(
+      period,
+      limit: limit,
+      country: country,
+      ballCount: ballCount,
+    );
   }
 }

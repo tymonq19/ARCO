@@ -3,6 +3,7 @@ library;
 
 import 'dart:convert';
 
+import 'constants.dart';
 import 'input.dart';
 import 'model.dart';
 import 'simulation.dart';
@@ -16,7 +17,14 @@ class Replay {
     this.formatVersion = version,
   });
 
-  static const int version = 1;
+  /// Replay format version.
+  ///
+  /// 1 → 2 (wall shapes, `GameConfig.ballCount`): the simulation itself
+  /// changed, so a v1 replay cannot be re-simulated by this build at all — its
+  /// walls were single segments and its config had no ball count. A v1 replay is
+  /// refused with `unsupported_version`, which means *the client is too old for
+  /// this server*, not *this score is bad*: the player must update the app.
+  static const int version = 2;
 
   final GameConfig config;
 
@@ -69,7 +77,12 @@ class ReplayResult {
 
   final bool ok;
 
-  /// `unsupported_version | bad_inputs | too_long | not_finished | score_mismatch | wrong_mode`.
+  /// `unsupported_version | wrong_mode | bad_config | bad_inputs | too_long |
+  /// not_finished | early_finish | score_mismatch`.
+  ///
+  /// `unsupported_version` is the only one that is not about the run: it says
+  /// the replay was recorded by a different build of the simulation, so the
+  /// player has to update the app before a score can be checked at all.
   final String? reason;
   final int score;
   final int ticks;
@@ -94,17 +107,31 @@ class ReplayVerifier {
   /// that set gameOver), `finalTick <= maxTicks`, and
   /// `players[0].score == claimedScore`.
   ///
-  /// Failure reasons: `unsupported_version`, `wrong_mode`, `bad_inputs`
-  /// (wrong number of logs or a non-monotonic / out-of-range log), `too_long`,
-  /// `not_finished` (no gameOver by finalTick), `early_finish` (gameOver
-  /// before finalTick) and `score_mismatch`. Whenever the simulation ran, the
-  /// result carries the simulated score, ticks, hash and lives.
+  /// Failure reasons: `unsupported_version` (a replay from another build of the
+  /// simulation — the app must be updated), `wrong_mode`, `bad_config` (a ball
+  /// count this build cannot run), `bad_inputs` (wrong number of logs or a
+  /// non-monotonic / out-of-range log), `too_long`, `not_finished` (no gameOver
+  /// by finalTick), `early_finish` (gameOver before finalTick) and
+  /// `score_mismatch`. Whenever the simulation ran, the result carries the
+  /// simulated score, ticks, hash and lives.
+  ///
+  /// The ball count is whatever `config.ballCount` says, because the server has
+  /// to re-simulate the game that was played; which ball counts may be *ranked*
+  /// is a leaderboard policy, not a verification one (SPEC §4).
   static ReplayResult verify(Replay r) {
     if (r.formatVersion != Replay.version) {
       return const ReplayResult(ok: false, reason: 'unsupported_version');
     }
     if (r.config.mode != GameMode.solo) {
       return const ReplayResult(ok: false, reason: 'wrong_mode');
+    }
+    // A config the simulation cannot run (a ball count outside the supported
+    // range) is refused before anything is simulated. Decoded replays are
+    // already checked by GameConfig.fromJson; this covers a config built in
+    // process.
+    if (r.config.ballCount < minBallCount ||
+        r.config.ballCount > maxBallCount) {
+      return const ReplayResult(ok: false, reason: 'bad_config');
     }
     if (r.inputs.length != r.config.playerCount) {
       return const ReplayResult(ok: false, reason: 'bad_inputs');

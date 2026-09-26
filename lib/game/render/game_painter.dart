@@ -54,6 +54,10 @@ class GamePainter extends CustomPainter {
   static final Path _heartPath = _buildHeart();
   static final Path _starPath = _buildStar();
 
+  /// Scratch path for one wall's center line, rebuilt per wall per frame and
+  /// never handed out (see [_buildWallPath]).
+  final Path _wallPath = Path();
+
   late final BallArt _ballArt = createBallArt(equipped.ball);
   late final PaddleArt _ownPaddleArt = createPaddleArt(equipped.paddle);
 
@@ -156,8 +160,8 @@ class GamePainter extends CustomPainter {
     if (state != null) {
       _drawWalls(canvas, state);
       _drawPickups(canvas, state);
-      _drawWake(canvas);
-      _drawBall(canvas, state);
+      _drawWake(canvas, state);
+      _drawBalls(canvas, state);
       _drawPaddles(canvas, state);
     }
     _drawParticles(canvas);
@@ -230,38 +234,98 @@ class GamePainter extends CustomPainter {
 
   // ------------------------------------------------------------------- walls
 
+  /// The walls, each one a polyline of two, three or `wallCurveSegments + 1`
+  /// vertices (SPEC §2.3).
+  ///
+  /// Every shape is drawn as **one stroked [Path]** rather than a sequence of
+  /// lines. That is what keeps the width even and the joints clean: separate
+  /// `drawLine` calls with round caps bulge at every joint and with butt caps
+  /// leave a notch in the outside of the bend, and either way a curve reads as a
+  /// chain of sticks. A single path is stroked with a round join, so a bent
+  /// wall's corner is a clean arc of the wall's own half-thickness, and a curved
+  /// wall's chords are smoothed into a real curve by [_buildWallPath].
+  ///
+  /// The fade is the player's only warning that a wall is about to become solid,
+  /// so it is drawn on **two** channels: opacity, and width. A wall fading in
+  /// grows from a little over half thickness to full as it brightens, so it
+  /// visibly thickens into existence — and because the core now guarantees
+  /// `alpha == 1` exactly while `solid` (see `Wall.alpha`), a wall at full width
+  /// and full opacity is always a wall that collides, and one that is thin and
+  /// faint never is.
   void _drawWalls(Canvas canvas, GameState state) {
     if (state.walls.isEmpty) return;
-    final width = wallHalfThickness * 2 * geometry.scale;
+    final full = wallHalfThickness * 2 * geometry.scale;
     final cap = theme.strokeCap;
     for (final w in state.walls) {
       final a = w.alpha.clamp(0.0, 1.0);
       if (a <= 0.01) continue;
-      final p1 = geometry.toScreen(w.x1, w.y1);
-      final p2 = geometry.toScreen(w.x2, w.y2);
+      final width = full * (0.55 + 0.45 * a);
+      final path = _buildWallPath(w);
       if (theme.hasGlow) {
         _glowStroke
           ..maskFilter = _mediumGlow
           ..strokeCap = cap
+          ..strokeJoin = StrokeJoin.round
           ..strokeWidth = width * 2.1
           ..color = theme.wall.withValues(alpha: 0.4 * a * theme.glow);
-        canvas.drawLine(p1, p2, _glowStroke);
+        canvas.drawPath(path, _glowStroke);
       }
       _stroke
         ..maskFilter = null
         ..strokeCap = cap
+        ..strokeJoin = StrokeJoin.round
         ..strokeWidth = width
         ..color = theme.wall.withValues(alpha: 0.95 * a);
-      canvas.drawLine(p1, p2, _stroke);
+      canvas.drawPath(path, _stroke);
       if (theme.highlightOpacity > 0) {
         _stroke
           ..strokeWidth = width * 0.35
           ..color = theme.highlight.withValues(
             alpha: theme.highlightOpacity * 1.45 * a,
           );
-        canvas.drawLine(p1, p2, _stroke);
+        canvas.drawPath(path, _stroke);
       }
     }
+  }
+
+  /// [wall]'s center line in screen space.
+  ///
+  /// Straight and bent walls are drawn exactly as the simulation sees them — a
+  /// bend is a bend, and rounding it away would turn every bent wall into a
+  /// vague arc that reads like a failed straight one. A curved wall is the one
+  /// shape whose vertices are a *sampling* of something smooth, so its chords
+  /// are replaced by quadratics through their midpoints: the outline has no
+  /// corners at all, and it stays within the chords' own sag of the ideal arc
+  /// (under 0.0025 units, a fraction of a pixel on a phone — see
+  /// `wallCurveSegments`).
+  ///
+  /// Reuses one [Path]: at most `maxWalls` of these are built per frame and the
+  /// object is never handed out.
+  Path _buildWallPath(Wall wall) {
+    final path = _wallPath..reset();
+    final n = wall.pointCount;
+    var p = geometry.toScreen(wall.pointX(0), wall.pointY(0));
+    path.moveTo(p.dx, p.dy);
+    if (wall.shape != WallShape.curved || n < 3) {
+      for (var i = 1; i < n; i++) {
+        p = geometry.toScreen(wall.pointX(i), wall.pointY(i));
+        path.lineTo(p.dx, p.dy);
+      }
+      return path;
+    }
+    var control = geometry.toScreen(wall.pointX(1), wall.pointY(1));
+    for (var i = 2; i < n; i++) {
+      final next = geometry.toScreen(wall.pointX(i), wall.pointY(i));
+      path.quadraticBezierTo(
+        control.dx,
+        control.dy,
+        (control.dx + next.dx) / 2,
+        (control.dy + next.dy) / 2,
+      );
+      control = next;
+    }
+    path.lineTo(control.dx, control.dy);
+    return path;
   }
 
   // ----------------------------------------------------------------- pickups
@@ -314,25 +378,39 @@ class GamePainter extends CustomPainter {
 
   // -------------------------------------------------------------------- ball
 
-  /// The ball's wake, drawn under the ball and the paddles. Which wake it is
-  /// belongs to the equipped skin: `ball.orb` follows the theme's own
+  /// Every live ball's wake, drawn under the balls and the paddles. Which wake it
+  /// is belongs to the equipped skin: `ball.orb` follows the theme's own
   /// [TrailStyle], the others carry a wake of their own (drawn in the theme's
   /// colours).
-  void _drawWake(Canvas canvas) {
-    _ballArt.paintWake(canvas, geometry, fx);
+  ///
+  /// Drawn in index order and **all of them before any body**, so a ball is never
+  /// buried under the other one's tail: the wakes make one layer and the balls
+  /// make the layer above it.
+  void _drawWake(Canvas canvas, GameState state) {
+    for (var i = 0; i < state.balls.length && i < FxState.maxBalls; i++) {
+      if (!state.balls[i].active) continue;
+      _ballArt.paintWake(canvas, geometry, fx, i);
+    }
   }
 
-  void _drawBall(Canvas canvas, GameState state) {
-    if (!state.ball.active) return;
-    final pos = fx.hasBall
-        ? geometry.toScreen(fx.ballX, fx.ballY)
-        : geometry.toScreen(state.ball.x, state.ball.y);
+  void _drawBalls(Canvas canvas, GameState state) {
+    for (var i = 0; i < state.balls.length && i < FxState.maxBalls; i++) {
+      _drawBall(canvas, state.balls[i], i);
+    }
+  }
+
+  void _drawBall(Canvas canvas, Ball ball, int index) {
+    if (!ball.active) return;
+    final trail = fx.ball(index);
+    final pos = trail.live
+        ? geometry.toScreen(trail.x, trail.y)
+        : geometry.toScreen(ball.x, ball.y);
     // The true collision radius, and the direction of travel in screen space
     // (y flipped, and turned around for duel player 1). A skin may decorate
     // outside the radius but never draw a body that disagrees with it.
     final r = ballRadius * geometry.scale;
-    final vx = state.ball.vx;
-    final vy = state.ball.vy;
+    final vx = ball.vx;
+    final vy = ball.vy;
     final speed = math.sqrt(vx * vx + vy * vy);
     var dx = 0.0;
     var dy = -1.0;
@@ -340,7 +418,7 @@ class GamePainter extends CustomPainter {
       dx = (geometry.rotated ? -vx : vx) / speed;
       dy = (geometry.rotated ? vy : -vy) / speed;
     }
-    _ballArt.paintBody(canvas, pos, r, dx, dy, fx);
+    _ballArt.paintBody(canvas, pos, r, dx, dy, fx, index);
   }
 
   // ----------------------------------------------------------------- paddles

@@ -149,7 +149,7 @@ void main() {
     final ball = ballPose();
     // A ball in flight, a seeded wake and nothing else on the board: a ball card
     // is about the ball.
-    expect(ball.ball.active, isTrue);
+    expect(ball.balls.single.active, isTrue);
     expect(ball.walls, isEmpty);
     expect(ball.pickups, isEmpty);
     expect(ballPoseFx().trailCount, FxState.trailLength);
@@ -159,7 +159,7 @@ void main() {
 
     // The paddle pose has no ball at all, so nothing crosses the paddle.
     final paddle = paddlePose();
-    expect(paddle.ball.active, isFalse);
+    expect(paddle.balls.single.active, isFalse);
     expect(paddle.players.single.paddle.angle, bottomCenterAngle);
     expect(paddlePoseFx().trailCount, 0);
 

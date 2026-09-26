@@ -11,27 +11,53 @@ import 'package:test/test.dart';
 Matcher inRange(num min, num max) =>
     allOf(greaterThanOrEqualTo(min), lessThanOrEqualTo(max));
 
-/// A state already in the playing phase with the ball active at the origin
+/// A state already in the playing phase with every ball active at the origin
 /// and no wall/pickup spawns scheduled for a very long time.
-GameState playingState({GameMode mode = GameMode.solo, int seed = 1}) {
-  final s = GameState.initial(GameConfig(mode: mode, seed: seed));
+GameState playingState({
+  GameMode mode = GameMode.solo,
+  int seed = 1,
+  int ballCount = 1,
+}) {
+  final s = GameState.initial(
+    GameConfig(mode: mode, seed: seed, ballCount: ballCount),
+  );
   s.phase = Phase.playing;
   s.serveTimer = 0;
   s.nextWallIn = 1 << 30;
   s.nextPickupIn = 1 << 30;
-  s.ball.active = true;
+  for (final b in s.balls) {
+    b.active = true;
+  }
   return s;
 }
 
-/// Places the ball at (x, y) moving along [angle] (radians) at [speed].
-void launchBall(GameState s, double x, double y, double angle, double speed) {
-  final b = s.ball;
+/// Places ball [index] at (x, y) moving along [angle] (radians) at [speed].
+void launchBall(
+  GameState s,
+  double x,
+  double y,
+  double angle,
+  double speed, {
+  int index = 0,
+}) {
+  final b = s.balls[index];
   b.x = x;
   b.y = y;
   b.speed = speed;
   b.vx = math.cos(angle) * speed;
   b.vy = math.sin(angle) * speed;
   b.active = true;
+}
+
+/// Parks ball [index] at the origin, inactive, so a two-ball test can look at
+/// one ball at a time.
+void parkBall(GameState s, int index) {
+  final b = s.balls[index];
+  b.x = 0;
+  b.y = 0;
+  b.vx = 0;
+  b.vy = 0;
+  b.active = false;
 }
 
 List<PlayerInput> noneInputs(GameState s) =>
@@ -123,17 +149,103 @@ List<GameEvent> runCollecting(
   return out;
 }
 
-/// Distance of the ball from the arena center.
-double ballDistance(GameState s) => dist(0, 0, s.ball.x, s.ball.y);
+/// Distance of ball [index] from the arena center.
+double ballDistance(GameState s, [int index = 0]) =>
+    dist(0, 0, s.balls[index].x, s.balls[index].y);
 
-/// Places the ball on the ring [radius] at [angle], moving straight outward
+/// Distance from (px, py) to [w]'s polyline — the smallest over its segments.
+double wallDistance(Wall w, double px, double py) {
+  var best = double.infinity;
+  for (var i = 0; i < w.segmentCount; i++) {
+    final d = segmentDistance(
+      w.pointX(i),
+      w.pointY(i),
+      w.pointX(i + 1),
+      w.pointY(i + 1),
+      px,
+      py,
+    );
+    if (d < best) best = d;
+  }
+  return best;
+}
+
+/// Total path length of [w] (the sum of its segment lengths).
+double wallLength(Wall w) {
+  var total = 0.0;
+  for (var i = 0; i < w.segmentCount; i++) {
+    total += dist(w.pointX(i), w.pointY(i), w.pointX(i + 1), w.pointY(i + 1));
+  }
+  return total;
+}
+
+/// Farthest any vertex of [w] sits from its center.
+double wallFootprint(Wall w) {
+  var best = 0.0;
+  for (var i = 0; i < w.pointCount; i++) {
+    final d = dist(w.centerX, w.centerY, w.pointX(i), w.pointY(i));
+    if (d > best) best = d;
+  }
+  return best;
+}
+
+/// Smallest distance between the polylines of [a] and [b] (0 when they cross),
+/// sampled finely enough for an assertion about wall separation.
+double wallGap(Wall a, Wall b) {
+  var best = double.infinity;
+  for (final pair in [
+    [a, b],
+    [b, a],
+  ]) {
+    final u = pair[0];
+    final v = pair[1];
+    for (var i = 0; i < u.segmentCount; i++) {
+      for (var step = 0; step <= 16; step++) {
+        final f = step / 16;
+        final x = u.pointX(i) + (u.pointX(i + 1) - u.pointX(i)) * f;
+        final y = u.pointY(i) + (u.pointY(i + 1) - u.pointY(i)) * f;
+        final d = wallDistance(v, x, y);
+        if (d < best) best = d;
+      }
+    }
+  }
+  return best;
+}
+
+/// A solid wall of [shape] built by the simulation's own shape builder.
+Wall shapedWall({
+  required WallShape shape,
+  double cx = 0,
+  double cy = 0,
+  double angle = 0,
+  double length = 0.4,
+  double parameter = 0,
+  int id = 1,
+  int ttl = 1 << 20,
+  int age = wallFadeTicks,
+}) => Wall(
+  id: id,
+  shape: shape,
+  points: Simulation.wallPoints(shape, cx, cy, angle, length, parameter),
+  ttl: ttl,
+  age: age,
+);
+
+/// Places ball [index] on the ring [radius] at [angle], moving straight outward
 /// (so its angle does not change before it reaches the paddle).
-void launchRadial(GameState s, double angle, double speed, double radius) {
+void launchRadial(
+  GameState s,
+  double angle,
+  double speed,
+  double radius, {
+  int index = 0,
+}) {
   launchBall(
     s,
     math.cos(angle) * radius,
     math.sin(angle) * radius,
     angle,
     speed,
+    index: index,
   );
 }

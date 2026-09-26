@@ -143,6 +143,117 @@ void main() {
     controller.dispose();
   });
 
+  // SPEC 2.3: the ball count is a rule of the game, so it has to reach the
+  // config the server verifies against — and it has to stop being changeable the
+  // moment the first serve is away, or the replay would describe a game nobody
+  // played.
+  group('the ball count', () {
+    test(
+      'is remembered, reaches the replay and freezes at the first serve',
+      () async {
+        final env = await createTestEnv();
+        expect(
+          env.settings.ballCount,
+          minBallCount,
+          reason: 'one ball by default',
+        );
+
+        var seed = 70;
+        final controller = SoloController(
+          settings: env.settings,
+          audio: env.audio,
+          haptics: env.haptics,
+          input: FakeInput(),
+          seedSource: () => seed++,
+        );
+        expect(controller.ballCount, 1);
+        expect(controller.state.balls, hasLength(1));
+
+        // Chosen on the start overlay: the game is rebuilt around it.
+        expect(controller.setBallCount(2), isTrue);
+        expect(controller.ballCount, 2);
+        expect(controller.state.balls, hasLength(2));
+        expect(controller.started, isFalse);
+        // Persisted, so the next launch and the next screen agree with it.
+        expect(env.settings.ballCount, 2);
+        expect(env.storage.getInt('ballCount'), 2);
+
+        // Choosing it again is a no-op rather than a fresh game.
+        final seedNow = controller.state.config.seed;
+        expect(controller.setBallCount(2), isFalse);
+        expect(controller.state.config.seed, seedNow);
+
+        // Once the serve is away it is frozen: the count is in the replay.
+        controller.start();
+        controller.advance(frame);
+        expect(controller.setBallCount(1), isFalse);
+        expect(controller.ballCount, 2);
+        expect(env.settings.ballCount, 2);
+
+        // A fresh game keeps the remembered choice.
+        controller.retry();
+        expect(controller.ballCount, 2);
+        expect(controller.state.balls, hasLength(2));
+        controller.dispose();
+      },
+    );
+
+    test('out of range resolves to a game the simulation can run', () async {
+      final env = await createTestEnv(prefs: const {'ballCount': 9});
+      expect(env.settings.ballCount, maxBallCount);
+      final controller = SoloController(
+        settings: env.settings,
+        audio: env.audio,
+        haptics: env.haptics,
+        input: FakeInput(),
+        seedSource: () => 1,
+      );
+      expect(controller.state.balls, hasLength(maxBallCount));
+      controller.dispose();
+    });
+
+    test('a two-ball run verifies, and its own board records it', () async {
+      final env = await createTestEnv(prefs: const {'ballCount': 2});
+      late SoloController controller;
+      var frames = 0;
+      controller = SoloController(
+        settings: env.settings,
+        audio: env.audio,
+        haptics: env.haptics,
+        input: FakeInput(() {
+          final state = controller.state;
+          return frames < 600
+              ? ScriptedInput.aimAtBall(state, 0)
+              : ScriptedInput.avoidBall(state, 0);
+        }),
+        seedSource: () => 4242,
+      );
+      expect(controller.state.balls, hasLength(2));
+      controller.start();
+      while (!controller.gameOver && frames < 20000) {
+        controller.advance(frame);
+        frames++;
+      }
+      expect(controller.gameOver, isTrue, reason: 'the game never ended');
+
+      final replay = controller.replay!;
+      expect(replay.config.ballCount, 2);
+      // The count survives the wire, which is the only way the server can
+      // re-simulate the same game.
+      final decoded = Replay.decode(replay.encode());
+      expect(decoded.config.ballCount, 2);
+      final result = ReplayVerifier.verify(decoded);
+      expect(result.ok, isTrue, reason: 'verify failed: ${result.reason}');
+      expect(result.score, controller.score);
+
+      // One record per board: the two-ball run does not touch the classic best.
+      expect(env.settings.bestScoreFor(2), controller.score);
+      expect(env.settings.bestScore, 0);
+      expect(env.settings.hasPlayed(2), isTrue);
+      controller.dispose();
+    });
+  });
+
   test('records the personal best', () async {
     final env = await createTestEnv();
     late SoloController controller;

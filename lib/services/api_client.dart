@@ -29,6 +29,11 @@ const String invalidCredentialsError = 'invalid_credentials';
 /// so the player is asked for another name rather than told their score is bad.
 const String offensiveNameError = 'offensive_name';
 
+/// The server does not read this build's replay format (`Replay.version`,
+/// SPEC §2.5). Like [offensiveNameError] this says nothing about the run, so the
+/// replay is kept: updating the app is all it takes to send the same game.
+const String unsupportedVersionError = 'unsupported_version';
+
 /// Thrown for a call that produced no usable answer: a transport failure, a
 /// timeout, a refused credential, rate limiting or a 5xx.
 class ApiException implements Exception {
@@ -434,6 +439,11 @@ class SubmitResult {
   /// The name was refused by the filter of SPEC §4.7. The replay is good; only
   /// the nickname has to change.
   bool get isOffensiveName => error == offensiveNameError;
+
+  /// The server cannot read this build's replay format (SPEC §2.5). Nothing is
+  /// wrong with the run, so the replay is kept and the player is asked to update
+  /// rather than told their score was rejected.
+  bool get isUnsupportedVersion => error == unsupportedVersionError;
 
   /// The answer does not settle the replay's fate (rate limiting, or a reply
   /// we cannot interpret); the replay should be kept and retried later.
@@ -979,15 +989,23 @@ class ApiClient {
   /// composes with the period rather than replacing it (SPEC §4.6). An unusable
   /// code is the server's `400 invalid_country`, surfaced as an [ApiException]
   /// carrying that [ApiException.errorCode].
+  ///
+  /// [ballCount] picks the board: a one-ball run and a two-ball run are two
+  /// different games (SPEC §2.3), so they are ranked separately, and the
+  /// parameter composes with `period` and `country` exactly as those two compose
+  /// with each other. It is always sent, so which board is being asked for is
+  /// never left implied.
   Future<List<LeaderboardEntry>> leaderboard(
     LeaderboardPeriod period, {
     int limit = 100,
     String? country,
+    int ballCount = minBallCount,
   }) async {
     final j = await _getJson(
       _uri('/api/leaderboard', {
         'period': period.name,
         'limit': '$limit',
+        'balls': '${ballCount.clamp(minBallCount, maxBallCount)}',
         'country': ?country,
       }),
     );
@@ -1102,10 +1120,14 @@ class ApiClient {
     }
   }
 
-  /// Optional endpoint: rank a score would have right now.
-  Future<int> rank(int score) async {
+  /// Optional endpoint: rank a score would have right now, on the [ballCount]
+  /// board (SPEC §4.6).
+  Future<int> rank(int score, {int ballCount = minBallCount}) async {
     final j = await _getJson(
-      _uri('/api/leaderboard/rank', {'score': '$score'}),
+      _uri('/api/leaderboard/rank', {
+        'score': '$score',
+        'balls': '${ballCount.clamp(minBallCount, maxBallCount)}',
+      }),
     );
     return (j['rank'] as num?)?.toInt() ?? 0;
   }

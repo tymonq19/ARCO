@@ -22,6 +22,7 @@ import '../services/score_submitter.dart';
 import '../services/shop_service.dart';
 import '../services/storage.dart';
 import 'widgets/account_offer_card.dart';
+import 'widgets/ball_count_selector.dart';
 import 'widgets/hearts_row.dart';
 import 'widgets/multiplier_badge.dart';
 import 'widgets/neon_button.dart';
@@ -385,7 +386,14 @@ class _SoloScreenState extends State<SoloScreen> with WidgetsBindingObserver {
                 combo: _controller.player.combo,
               ),
               const Spacer(),
-              _stat(theme, s.t('hud.best'), '${settings.bestScore}', end: true),
+              // The best on the board this game counts for — which is the only
+              // number it is being measured against (SPEC §4.6).
+              _stat(
+                theme,
+                s.t('hud.best'),
+                '${settings.bestScoreFor(_controller.ballCount)}',
+                end: true,
+              ),
             ],
           ),
         ],
@@ -461,6 +469,19 @@ class _SoloScreenState extends State<SoloScreen> with WidgetsBindingObserver {
             style: TextStyle(color: theme.textDim, fontSize: 13),
           ),
           const SizedBox(height: 18),
+          // The ball count belongs here and not in Settings (SPEC §2.3): it is
+          // part of the config the replay is verified against and it decides
+          // which board the run lands on, so it is a rule of the game about to
+          // start. On this overlay it sits between the run and the button that
+          // begins it, where changing it is obviously choosing a game — and it
+          // is the last moment it *can* be changed, because the first serve
+          // freezes it into the replay.
+          const Divider(height: 26),
+          BallCountSelector(
+            value: settings.ballCount,
+            onChanged: _controller.setBallCount,
+          ),
+          const SizedBox(height: 20),
           NeonButton(
             label: s.t('solo.tapToStart'),
             height: 52,
@@ -603,7 +624,8 @@ class _SoloScreenState extends State<SoloScreen> with WidgetsBindingObserver {
             ],
           ),
           Text(
-            '${s.t('hud.best')}: ${settings.bestScore}',
+            '${s.t('hud.best')}: '
+            '${settings.bestScoreFor(_controller.ballCount)}',
             style: TextStyle(color: theme.textDim, fontSize: 13),
           ),
           // The day's allowance is spent, so this run paid less than it was worth

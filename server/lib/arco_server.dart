@@ -13,6 +13,7 @@ export 'src/catalogue.dart';
 export 'src/config.dart';
 export 'src/country.dart';
 export 'src/db.dart';
+export 'src/duel_ball_count.dart';
 export 'src/http_util.dart';
 export 'src/id_token.dart';
 export 'src/leaderboard.dart';

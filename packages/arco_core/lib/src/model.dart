@@ -12,6 +12,20 @@ enum Phase { serving, playing, gameOver }
 
 enum PickupType { heart, star }
 
+/// Shape of a [Wall] (SPEC §2.3). Every shape is collided as a polyline; the
+/// shape only says how that polyline was built, which is what a renderer needs
+/// to draw a curve as a curve instead of a chain of chords.
+enum WallShape {
+  /// Two vertices, one segment — the only wall the game had before shapes.
+  straight,
+
+  /// Three vertices: two equal arms meeting at a joint on the wall's center.
+  bent,
+
+  /// `wallCurveSegments + 1` vertices on a circular arc.
+  curved,
+}
+
 enum GameEventType {
   serve,
   paddleHit,
@@ -29,27 +43,61 @@ enum GameEventType {
 }
 
 class GameConfig {
-  const GameConfig({required this.mode, required this.seed});
+  const GameConfig({
+    required this.mode,
+    required this.seed,
+    this.ballCount = minBallCount,
+  }) : assert(ballCount >= minBallCount && ballCount <= maxBallCount);
 
   final GameMode mode;
 
   /// 32-bit unsigned seed.
   final int seed;
 
+  /// Balls in play, [minBallCount]..[maxBallCount]. 1 is the classic game and
+  /// the default; 2 is the two-ball option the player can switch on. It is part
+  /// of the config — and therefore of the replay — because the server has to
+  /// simulate the same game the player played (SPEC §2.3, §2.5).
+  final int ballCount;
+
   int get playerCount => mode == GameMode.duel ? 2 : 1;
   double get maxSpeed => mode == GameMode.duel ? maxSpeedDuel : maxSpeedSolo;
 
-  Map<String, dynamic> toJson() => {'m': mode.index, 's': seed};
+  Map<String, dynamic> toJson() => {'m': mode.index, 's': seed, 'n': ballCount};
 
-  factory GameConfig.fromJson(Map<String, dynamic> j) =>
-      GameConfig(mode: GameMode.values[j['m'] as int], seed: j['s'] as int);
+  /// Decodes a config, rejecting values the simulation cannot run. A missing
+  /// `n` means one ball (a snapshot written before ball counts existed).
+  ///
+  /// Throws [FormatException] on an unknown mode or an out-of-range ball count,
+  /// so a hostile or stale replay is refused where it is decoded instead of
+  /// silently simulating a different game than the one that was played.
+  factory GameConfig.fromJson(Map<String, dynamic> j) {
+    final mode = j['m'] as int;
+    if (mode < 0 || mode >= GameMode.values.length) {
+      throw FormatException('unknown game mode $mode');
+    }
+    final balls = j['n'] == null ? minBallCount : j['n'] as int;
+    if (balls < minBallCount || balls > maxBallCount) {
+      throw FormatException(
+        'ballCount $balls outside $minBallCount..$maxBallCount',
+      );
+    }
+    return GameConfig(
+      mode: GameMode.values[mode],
+      seed: j['s'] as int,
+      ballCount: balls,
+    );
+  }
 
   @override
   bool operator ==(Object other) =>
-      other is GameConfig && other.mode == mode && other.seed == seed;
+      other is GameConfig &&
+      other.mode == mode &&
+      other.seed == seed &&
+      other.ballCount == ballCount;
 
   @override
-  int get hashCode => Object.hash(mode, seed);
+  int get hashCode => Object.hash(mode, seed, ballCount);
 }
 
 /// Something that happened during a tick; consumed by rendering/audio and
@@ -61,6 +109,7 @@ class GameEvent {
     this.x = 0,
     this.y = 0,
     this.pickup,
+    this.ball = -1,
   });
 
   final GameEventType type;
@@ -71,18 +120,28 @@ class GameEvent {
   final double y;
   final PickupType? pickup;
 
-  List<dynamic> toJson() => [type.index, player, x, y, pickup?.index];
+  /// Index into [GameState.balls] of the ball the event came from, or -1 for an
+  /// event that belongs to no single ball (`serve` launches every ball;
+  /// `wallSpawn`, `wallExpire`, `pickupExpire` and `gameOver` belong to none).
+  /// With two balls one tick can carry two `paddleHit` events, and this is what
+  /// tells them apart.
+  final int ball;
 
+  List<dynamic> toJson() => [type.index, player, x, y, pickup?.index, ball];
+
+  /// Accepts a five-element event (no ball index) as `ball == -1`.
   factory GameEvent.fromJson(List<dynamic> j) => GameEvent(
     GameEventType.values[j[0] as int],
     player: j[1] as int,
     x: (j[2] as num).toDouble(),
     y: (j[3] as num).toDouble(),
     pickup: j[4] == null ? null : PickupType.values[j[4] as int],
+    ball: j.length > 5 ? j[5] as int : -1,
   );
 
   @override
-  String toString() => 'GameEvent($type, p=$player, ($x,$y), $pickup)';
+  String toString() =>
+      'GameEvent($type, p=$player, ($x,$y), $pickup, ball=$ball)';
 }
 
 class Ball {
@@ -179,52 +238,116 @@ class Player {
   );
 }
 
+/// An obstacle: an open polyline of at least two vertices, collided as one
+/// capsule per consecutive pair of vertices (SPEC §2.3).
+///
+/// [shape] says how the polyline was built — [WallShape.straight] has two
+/// vertices, [WallShape.bent] three and [WallShape.curved]
+/// `wallCurveSegments + 1` — so a renderer can draw a curve as a curve. The
+/// collision never looks at it: every shape is the same chain of capsules,
+/// which is why the no-tunnelling guarantee of a single segment carries over
+/// unchanged.
 class Wall {
   Wall({
     required this.id,
-    required this.x1,
-    required this.y1,
-    required this.x2,
-    required this.y2,
+    required this.shape,
+    required this.points,
     required this.ttl,
     this.age = 0,
-  });
+  }) : assert(points.length >= 4, 'a wall needs at least two vertices'),
+       assert(points.length.isEven, 'points is a flat list of x, y pairs');
+
+  /// A straight, single-segment wall from (x1, y1) to (x2, y2).
+  Wall.segment({
+    required int id,
+    required double x1,
+    required double y1,
+    required double x2,
+    required double y2,
+    required int ttl,
+    int age = 0,
+  }) : this(
+         id: id,
+         shape: WallShape.straight,
+         points: <double>[x1, y1, x2, y2],
+         ttl: ttl,
+         age: age,
+       );
 
   final int id;
-  final double x1, y1, x2, y2;
+  final WallShape shape;
+
+  /// Vertices as a flat `[x0, y0, x1, y1, …]` list, in order along the wall.
+  /// Never mutated after construction (a wall's geometry is fixed for its life).
+  final List<double> points;
 
   /// Lifetime in ticks; the wall is removed when `age >= ttl`.
   final int ttl;
   int age;
 
+  /// Number of vertices (2 for a straight wall).
+  int get pointCount => points.length >> 1;
+
+  /// Number of capsule segments (`pointCount - 1`).
+  int get segmentCount => pointCount - 1;
+
+  double pointX(int i) => points[i << 1];
+  double pointY(int i) => points[(i << 1) + 1];
+
   /// Collides only when fully faded in and not yet fading out.
   bool get solid => age >= wallFadeTicks && age < ttl - wallFadeTicks;
 
   /// 0..1 visual opacity (fade in / out).
+  ///
+  /// Exactly 1 while — and only while — the wall is [solid], so a wall the
+  /// player can see through is always a wall the ball can pass through and a
+  /// wall that looks solid always is. The two ramps mirror each other: the
+  /// first tick of a wall's life and the last are both invisible, and the
+  /// 29 ticks in between each window's ends step by 1 / [wallFadeTicks].
   double get alpha {
     if (age < wallFadeTicks) return age / wallFadeTicks;
-    final left = ttl - age;
+    final left = ttl - 1 - age;
     if (left < wallFadeTicks) return left <= 0 ? 0 : left / wallFadeTicks;
     return 1;
   }
 
-  /// Segment midpoint.
-  double get centerX => (x1 + x2) * 0.5;
-  double get centerY => (y1 + y2) * 0.5;
+  /// The point the wall was built around: the middle vertex when there is an
+  /// odd number of them (the joint of a bent wall, the midpoint of a curve) and
+  /// the midpoint of the two middle vertices otherwise (the midpoint of a
+  /// straight segment). Every vertex lies within `length / 2` of it, so a
+  /// shaped wall takes up no more room than the straight wall it replaced.
+  double get centerX {
+    final n = pointCount;
+    if (n.isOdd) return pointX(n >> 1);
+    final i = (n >> 1) - 1;
+    return (pointX(i) + pointX(i + 1)) * 0.5;
+  }
 
-  Wall clone() =>
-      Wall(id: id, x1: x1, y1: y1, x2: x2, y2: y2, ttl: ttl, age: age);
+  double get centerY {
+    final n = pointCount;
+    if (n.isOdd) return pointY(n >> 1);
+    final i = (n >> 1) - 1;
+    return (pointY(i) + pointY(i + 1)) * 0.5;
+  }
 
-  List<dynamic> toJson() => [id, x1, y1, x2, y2, age, ttl];
+  Wall clone() => Wall(
+    id: id,
+    shape: shape,
+    points: List<double>.of(points),
+    ttl: ttl,
+    age: age,
+  );
+
+  List<dynamic> toJson() => [id, shape.index, age, ttl, ...points];
 
   factory Wall.fromJson(List<dynamic> j) => Wall(
     id: j[0] as int,
-    x1: (j[1] as num).toDouble(),
-    y1: (j[2] as num).toDouble(),
-    x2: (j[3] as num).toDouble(),
-    y2: (j[4] as num).toDouble(),
-    age: j[5] as int,
-    ttl: j[6] as int,
+    shape: WallShape.values[j[1] as int],
+    age: j[2] as int,
+    ttl: j[3] as int,
+    points: <double>[
+      for (var i = 4; i < j.length; i++) (j[i] as num).toDouble(),
+    ],
   );
 }
 
@@ -262,7 +385,7 @@ class GameState {
   GameState({
     required this.config,
     required this.players,
-    required this.ball,
+    required this.balls,
     required this.rng,
     this.tick = 0,
     this.phase = Phase.serving,
@@ -280,7 +403,11 @@ class GameState {
   int tick;
   Phase phase;
   final List<Player> players;
-  final Ball ball;
+
+  /// `config.ballCount` balls, resolved in this order within a tick: ball 0
+  /// moves and collides first, so it takes a contested pickup, and the first
+  /// ball to escape ends the rally before the others move (SPEC §2.3).
+  final List<Ball> balls;
   final List<Wall> walls;
   final List<Pickup> pickups;
 
@@ -303,8 +430,8 @@ class GameState {
 
   /// Fresh state for [config]: paddles at their start angles (solo 3π/2; duel
   /// P0 3π/2, P1 π/2), serving phase with the full serve timer, first wall in
-  /// 7–9 s and first pickup in 3–5 s (drawn from the seeded rng) and the ball
-  /// inactive at the origin. In a duel the player who receives the first serve
+  /// 7–9 s and first pickup in 3–5 s (drawn from the seeded rng) and
+  /// `config.ballCount` balls inactive at the origin. In a duel the player who receives the first serve
   /// is drawn here; the serve direction itself is only drawn when the serve
   /// timer reaches 0 (SPEC §2.3).
   factory GameState.initial(GameConfig config) {
@@ -316,7 +443,7 @@ class GameState {
     final s = GameState(
       config: config,
       players: players,
-      ball: Ball(),
+      balls: <Ball>[for (var i = 0; i < config.ballCount; i++) Ball()],
       rng: rng,
     );
     s.nextWallIn = (rng.nextRange(7, 9) * tickRate).round();
@@ -335,13 +462,17 @@ class GameState {
   void prepareServe(int receiver) {
     phase = Phase.serving;
     serveTimer = serveTicks;
-    ball.x = 0;
-    ball.y = 0;
-    ball.vx = 0;
-    ball.vy = 0;
-    ball.speed = baseSpeed;
-    ball.owner = config.mode == GameMode.duel ? receiver : -1;
-    ball.active = false;
+    final owner = config.mode == GameMode.duel ? receiver : -1;
+    for (var i = 0; i < balls.length; i++) {
+      final ball = balls[i];
+      ball.x = 0;
+      ball.y = 0;
+      ball.vx = 0;
+      ball.vy = 0;
+      ball.speed = baseSpeed;
+      ball.owner = owner;
+      ball.active = false;
+    }
   }
 
   /// Deep copy (including rng and events).
@@ -349,7 +480,7 @@ class GameState {
     final c = GameState(
       config: config,
       players: [for (final p in players) p.clone()],
-      ball: ball.clone(),
+      balls: [for (final b in balls) b.clone()],
       rng: rng.clone(),
       tick: tick,
       phase: phase,
@@ -369,10 +500,14 @@ class GameState {
   ///
   /// Mixes, in order: tick, phase, serveTimer, nextWallIn, nextPickupIn,
   /// nextId, winner, the four rng words, per player (angle, lives, score,
-  /// combo), the ball (x, y, vx, vy, speed, owner, active), each wall (id,
-  /// x1, y1, x2, y2, age, ttl) and each pickup (id, type, x, y, ttl).
-  /// Doubles are quantized with `(v * 1e6).round()`; every value is mixed as
-  /// four little-endian bytes of its 32-bit two's complement.
+  /// combo), per ball (x, y, vx, vy, speed, owner, active), per wall (id,
+  /// shape, age, ttl, then every vertex coordinate) and per pickup (id, type,
+  /// x, y, ttl). Doubles are quantized with `(v * 1e6).round()`; every value is
+  /// mixed as four little-endian bytes of its 32-bit two's complement.
+  ///
+  /// A one-ball game therefore hashes exactly the values it hashed before ball
+  /// counts existed: `config` is not part of the hash, and a single ball mixes
+  /// the same seven values in the same place as the single ball did.
   int hash() {
     var h = 0x811C9DC5;
     h = _fnv(h, tick);
@@ -392,21 +527,23 @@ class GameState {
       h = _fnv(h, p.score);
       h = _fnv(h, p.combo);
     }
-    h = _fnv(h, _q(ball.x));
-    h = _fnv(h, _q(ball.y));
-    h = _fnv(h, _q(ball.vx));
-    h = _fnv(h, _q(ball.vy));
-    h = _fnv(h, _q(ball.speed));
-    h = _fnv(h, ball.owner);
-    h = _fnv(h, ball.active ? 1 : 0);
+    for (final b in balls) {
+      h = _fnv(h, _q(b.x));
+      h = _fnv(h, _q(b.y));
+      h = _fnv(h, _q(b.vx));
+      h = _fnv(h, _q(b.vy));
+      h = _fnv(h, _q(b.speed));
+      h = _fnv(h, b.owner);
+      h = _fnv(h, b.active ? 1 : 0);
+    }
     for (final w in walls) {
       h = _fnv(h, w.id);
-      h = _fnv(h, _q(w.x1));
-      h = _fnv(h, _q(w.y1));
-      h = _fnv(h, _q(w.x2));
-      h = _fnv(h, _q(w.y2));
+      h = _fnv(h, w.shape.index);
       h = _fnv(h, w.age);
       h = _fnv(h, w.ttl);
+      for (final v in w.points) {
+        h = _fnv(h, _q(v));
+      }
     }
     for (final k in pickups) {
       h = _fnv(h, k.id);
@@ -438,7 +575,7 @@ class GameState {
     'ph': phase.index,
     'st': serveTimer,
     'win': winner,
-    'b': ball.toJson(),
+    'b': [for (final b in balls) b.toJson()],
     'p': [for (final p in players) p.toJson()],
     'w': [for (final w in walls) w.toJson()],
     'k': [for (final k in pickups) k.toJson()],
@@ -449,28 +586,43 @@ class GameState {
     'cfg': config.toJson(),
   };
 
-  factory GameState.fromJson(Map<String, dynamic> json) => GameState(
-    config: GameConfig.fromJson(json['cfg'] as Map<String, dynamic>),
-    players: [
-      for (final p in json['p'] as List<dynamic>)
-        Player.fromJson(p as List<dynamic>),
-    ],
-    ball: Ball.fromJson(json['b'] as List<dynamic>),
-    rng: Prng.fromJson(json['rng'] as List<dynamic>),
-    tick: json['t'] as int,
-    phase: Phase.values[json['ph'] as int],
-    walls: [
-      for (final w in json['w'] as List<dynamic>)
-        Wall.fromJson(w as List<dynamic>),
-    ],
-    pickups: [
-      for (final k in json['k'] as List<dynamic>)
-        Pickup.fromJson(k as List<dynamic>),
-    ],
-    serveTimer: json['st'] as int,
-    nextWallIn: json['nw'] as int,
-    nextPickupIn: json['np'] as int,
-    nextId: json['nid'] as int,
-    winner: json['win'] as int,
-  );
+  /// Rebuilds a state from a snapshot. Throws [FormatException] when the ball
+  /// list does not match `cfg.n`, because a state whose ball count disagrees
+  /// with its config would step differently on the two sides of the wire.
+  factory GameState.fromJson(Map<String, dynamic> json) {
+    final config = GameConfig.fromJson(json['cfg'] as Map<String, dynamic>);
+    final balls = [
+      for (final b in json['b'] as List<dynamic>)
+        Ball.fromJson(b as List<dynamic>),
+    ];
+    if (balls.length != config.ballCount) {
+      throw FormatException(
+        'snapshot carries ${balls.length} balls, config says ${config.ballCount}',
+      );
+    }
+    return GameState(
+      config: config,
+      balls: balls,
+      players: [
+        for (final p in json['p'] as List<dynamic>)
+          Player.fromJson(p as List<dynamic>),
+      ],
+      rng: Prng.fromJson(json['rng'] as List<dynamic>),
+      tick: json['t'] as int,
+      phase: Phase.values[json['ph'] as int],
+      walls: [
+        for (final w in json['w'] as List<dynamic>)
+          Wall.fromJson(w as List<dynamic>),
+      ],
+      pickups: [
+        for (final k in json['k'] as List<dynamic>)
+          Pickup.fromJson(k as List<dynamic>),
+      ],
+      serveTimer: json['st'] as int,
+      nextWallIn: json['nw'] as int,
+      nextPickupIn: json['np'] as int,
+      nextId: json['nid'] as int,
+      winner: json['win'] as int,
+    );
+  }
 }

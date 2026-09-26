@@ -113,6 +113,17 @@ class _DuelScreenState extends State<DuelScreen> {
               onPressed: _leave,
             ),
           ),
+          // What this room is, said during the countdown — the last moment
+          // before the first serve and almost the only thing on screen then, so
+          // it is also how the **joiner** is told which game the creator picked
+          // (SPEC §2.3). Below the centre, clear of the countdown digits.
+          if (_controller.inCountdown)
+            Positioned(
+              left: 24,
+              right: 24,
+              bottom: hudHeight + padding.bottom + 28,
+              child: _ballsNotice(s, theme),
+            ),
           if (_controller.peerLeft) _overlay(_peerLeftPanel(s)),
           if (_controller.over && !_controller.peerLeft)
             _overlay(_resultPanel(s)),
@@ -135,6 +146,31 @@ class _DuelScreenState extends State<DuelScreen> {
       _controller.fx.setCountdown(null);
     }
   }
+
+  /// "This room plays 2 balls" — one quiet line, centred, in a chip that reads
+  /// over the arena in all four themes.
+  Widget _ballsNotice(Strings s, GameTheme theme) => Center(
+    child: Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+      decoration: ShapeDecoration(
+        color: theme.panelFill.withValues(alpha: 0.8),
+        shape: theme.border(
+          theme.radius(0.5),
+          color: theme.accentDuel.withValues(alpha: 0.5),
+          width: 1,
+        ),
+      ),
+      child: Text(
+        s.f('duel.ballsRoom', {'balls': s.balls(_controller.ballCount)}),
+        textAlign: TextAlign.center,
+        style: TextStyle(
+          color: theme.textPrimary,
+          fontSize: 13,
+          fontWeight: FontWeight.w700,
+        ),
+      ),
+    ),
+  );
 
   Widget _overlay(Widget child) => Positioned.fill(
     child: GestureDetector(

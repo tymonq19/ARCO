@@ -38,6 +38,7 @@ Future<DuelController> connectedController(
   FakeDuelServer server, {
   PlayerInput Function()? input,
   AudioService? audio,
+  int ballCount = minBallCount,
 }) async {
   final client = DuelClient(
     wsUri: () => Uri.parse('ws://fake.local/ws'),
@@ -50,12 +51,179 @@ Future<DuelController> connectedController(
     haptics: env.haptics,
     input: FakeInput(input),
   );
-  await controller.createRoom('Tester');
+  await controller.createRoom('Tester', ballCount: ballCount);
   await settle();
   return controller;
 }
 
 void main() {
+  // SPEC 2.3 / 3: the creator picks the game, the server tells both clients, and
+  // the prediction has to run the same simulation the server is running — a
+  // prediction with the wrong number of balls disagrees on every tick between
+  // snapshots.
+  group('two balls', () {
+    test('the creator\'s choice travels with the room and reaches both '
+        'sides', () async {
+      final env = await createTestEnv();
+      final server = FakeDuelServer();
+      final controller = await connectedController(env, server, ballCount: 2);
+
+      // The choice went up on the `create` frame.
+      final create = server.frames.firstWhere((f) => f['t'] == 'create');
+      expect(create['n'], 2);
+      // And came back on `room`, which is what the joiner reads before the
+      // first serve.
+      expect(server.ballCount, 2);
+      expect(controller.ballCount, 2);
+
+      server.start(countdown: 0);
+      await settle();
+      expect(controller.state!.config.ballCount, 2);
+      expect(controller.state!.balls, hasLength(2));
+      controller.dispose();
+    });
+
+    test('the joiner is told what the room already is', () async {
+      final env = await createTestEnv();
+      // The room exists and the creator chose two balls; this client joins it.
+      final server = FakeDuelServer(slot: 1)..ballCount = 2;
+      final client = DuelClient(
+        wsUri: () => Uri.parse('ws://fake.local/ws'),
+        connector: server.connect,
+      );
+      final controller = DuelController(
+        client: client,
+        settings: env.settings,
+        audio: env.audio,
+        haptics: env.haptics,
+        input: FakeInput(),
+      );
+      await controller.joinRoom('Tester', 'KX7Q');
+      await settle();
+      // Before the match starts, and without having chosen anything.
+      expect(controller.hasMatch, isFalse);
+      expect(controller.ballCount, 2);
+      expect(env.settings.ballCount, minBallCount);
+
+      server.start(countdown: 180);
+      await settle();
+      expect(controller.inCountdown, isTrue);
+      expect(controller.state!.balls, hasLength(2));
+      controller.dispose();
+    });
+
+    test('a server that says nothing about ball counts plays one', () async {
+      final env = await createTestEnv();
+      final server = FakeDuelServer();
+      final controller = await connectedController(env, server, ballCount: 2);
+      server.startWithoutBalls(countdown: 0);
+      await settle();
+      expect(controller.state!.balls, hasLength(1));
+      controller.dispose();
+    });
+
+    test('prediction keeps the own paddle and reconciles both balls', () async {
+      final env = await createTestEnv();
+      final server = FakeDuelServer();
+      final controller = await connectedController(
+        env,
+        server,
+        input: () => const PlayerInput(move: inputMoveMax),
+        ballCount: 2,
+      );
+      server.start(countdown: 0);
+      await settle();
+      for (var i = 0; i < 40; i++) {
+        controller.advance(frame);
+      }
+      final predicted = controller.state!.players[0].paddle.angle;
+      expect(predicted, greaterThan(DetMath.threeHalfPi));
+      expect(controller.state!.balls, hasLength(2));
+
+      // An authoritative two-ball snapshot, both balls somewhere else entirely
+      // and the own paddle within tolerance of the prediction.
+      final authoritative = GameState.initial(
+        const GameConfig(mode: GameMode.duel, seed: seed, ballCount: 2),
+      );
+      authoritative.phase = Phase.playing;
+      authoritative.serveTimer = 0;
+      authoritative.players[0].paddle.angle = predicted + 0.1;
+      authoritative.players[1].paddle.angle = DetMath.halfPi - 0.3;
+      authoritative.balls[0]
+        ..active = true
+        ..x = 0.4
+        ..y = 0.1
+        ..vx = 0.5
+        ..vy = 0.2;
+      authoritative.balls[1]
+        ..active = true
+        ..x = -0.45
+        ..y = -0.2
+        ..vx = -0.3
+        ..vy = 0.4;
+      server.snap(authoritative);
+      await settle();
+
+      // The own paddle is still the predicted one — that is what keeps it
+      // responsive — and everything else is the server's.
+      expect(
+        controller.state!.players[0].paddle.angle,
+        closeTo(predicted, 1e-9),
+      );
+      expect(
+        controller.state!.players[1].paddle.angle,
+        closeTo(DetMath.halfPi - 0.3, 1e-9),
+      );
+      expect(controller.state!.balls, hasLength(2));
+      expect(controller.state!.balls[0].x, closeTo(0.4, 1e-9));
+      expect(controller.state!.balls[1].x, closeTo(-0.45, 1e-9));
+
+      // Both balls are then followed, each with a trail of its own.
+      for (var i = 0; i < 20; i++) {
+        controller.advance(frame);
+      }
+      final fx = controller.fx;
+      expect(fx.ballCount, 2);
+      expect(fx.ball(0).live, isTrue);
+      expect(fx.ball(1).live, isTrue);
+      expect(fx.ball(0).trailCount, greaterThan(1));
+      expect(fx.ball(1).trailCount, greaterThan(1));
+      // Two paths, not one zig-zag shared between them.
+      expect(
+        fx.ball(0).trailX(fx.ball(0).trailCount - 1),
+        isNot(closeTo(fx.ball(1).trailX(fx.ball(1).trailCount - 1), 0.05)),
+      );
+      controller.dispose();
+    });
+
+    test('an undecodable snapshot is dropped, not half-applied', () async {
+      final env = await createTestEnv();
+      final server = FakeDuelServer();
+      final controller = await connectedController(env, server, ballCount: 2);
+      server.start(countdown: 0);
+      await settle();
+      for (var i = 0; i < 10; i++) {
+        controller.advance(frame);
+      }
+      final tick = controller.state!.tick;
+
+      // A snapshot whose ball list disagrees with its own config: the core
+      // refuses it (SPEC 2.5) and the prediction carries on.
+      final bad = GameState.initial(
+        const GameConfig(mode: GameMode.duel, seed: seed, ballCount: 2),
+      ).toJson();
+      (bad['b'] as List<dynamic>).removeLast();
+      server.emit(SnapMsg(tick: 999, state: bad, events: const []));
+      await settle();
+
+      expect(controller.state!.balls, hasLength(2));
+      expect(controller.state!.tick, tick);
+      controller.advance(frame);
+      expect(controller.state!.tick, tick + 1);
+      controller.dispose();
+    });
+  });
+
   test('starts a match from StartMsg and counts down', () async {
     final env = await createTestEnv();
     final server = FakeDuelServer();

@@ -50,13 +50,88 @@ class ScorePopup {
   double get fade => maxLife <= 0 ? 0 : (life / maxLife).clamp(0.0, 1.0);
 }
 
-/// Client-only visual state that rides along with a [GameState]: ball trail,
-/// particles, screen shake, hit flashes, floating score popups and the
+/// Everything the renderer keeps **per ball**: the position it is actually drawn
+/// at and the path it has flown.
+///
+/// A game has one or two balls (SPEC §2.3, `GameConfig.ballCount`), and each one
+/// needs its own history — a single shared trail would stitch the two paths into
+/// one zig-zag that belongs to neither ball. The ring buffer is allocated once
+/// per slot and reused for the whole session.
+class BallFx {
+  /// x, y interleaved, oldest first once unwrapped by [trailX] / [trailY].
+  final Float32List _trail = Float32List(FxState.trailLength * 2);
+  int _count = 0;
+  int _head = 0;
+
+  /// Rendered position in simulation units (smoothed; see [follow]).
+  double x = 0;
+  double y = 0;
+
+  /// True while this ball is in play and has a position worth drawing.
+  bool live = false;
+
+  int get trailCount => _count;
+
+  /// Trail sample [i], 0 = oldest.
+  double trailX(int i) => _trail[_indexOf(i) * 2];
+  double trailY(int i) => _trail[_indexOf(i) * 2 + 1];
+
+  int _indexOf(int i) =>
+      (_head - _count + i + FxState.trailLength * 2) % FxState.trailLength;
+
+  /// Follows [ball], optionally smoothing the correction a duel snapshot
+  /// introduces, and feeds the trail. [smoothing] is the fraction of the
+  /// remaining error taken per frame.
+  void follow(Ball ball, {required bool smooth, required double smoothing}) {
+    if (!ball.active) {
+      live = false;
+      x = ball.x;
+      y = ball.y;
+      _count = 0;
+      return;
+    }
+    final dx = ball.x - x;
+    final dy = ball.y - y;
+    final far = dx * dx + dy * dy > 0.0625; // > 0.25 units: a serve or a snap
+    if (!live || far || !smooth) {
+      x = ball.x;
+      y = ball.y;
+      if (!live || far) _count = 0;
+      live = true;
+    } else {
+      final k = smoothing.clamp(0.05, 1.0);
+      x += dx * k;
+      y += dy * k;
+    }
+    _push(x, y);
+  }
+
+  void _push(double px, double py) {
+    _trail[_head * 2] = px;
+    _trail[_head * 2 + 1] = py;
+    _head = (_head + 1) % FxState.trailLength;
+    if (_count < FxState.trailLength) _count++;
+  }
+
+  /// Drops the path but keeps the position (a life lost, a snap).
+  void clearTrail() => _count = 0;
+
+  void reset() {
+    live = false;
+    x = 0;
+    y = 0;
+    _count = 0;
+    _head = 0;
+  }
+}
+
+/// Client-only visual state that rides along with a [GameState]: one trail per
+/// ball, particles, screen shake, hit flashes, floating score popups and the
 /// countdown label. Fed by [GameEvent]s (see [applyEvent]) and advanced once
 /// per rendered frame by [update].
 ///
-/// Everything is pre-allocated: particles are capped at [maxParticles] and the
-/// trail is a ring buffer, so a frame never grows the heap.
+/// Everything is pre-allocated: particles are capped at [maxParticles] and every
+/// ball's trail is a ring buffer, so a frame never grows the heap.
 class FxState {
   FxState();
 
@@ -91,9 +166,24 @@ class FxState {
     growable: false,
   );
 
-  final Float32List _trail = Float32List(trailLength * 2);
-  int _trailCount = 0;
-  int _trailHead = 0;
+  /// Slots for every ball the simulation can have (SPEC §2.2,
+  /// `maxBallCount`), allocated once. [ballCount] says how many of them are in
+  /// play right now.
+  static const int maxBalls = maxBallCount;
+
+  final List<BallFx> balls = List<BallFx>.generate(
+    maxBalls,
+    (_) => BallFx(),
+    growable: false,
+  );
+
+  /// Balls currently in play, 1..[maxBalls]; set by [trackBalls].
+  int ballCount = 1;
+
+  /// The effects of ball [index], clamped so a stale index from a snapshot that
+  /// arrived a frame late can never read off the end.
+  BallFx ball(int index) =>
+      balls[index < 0 ? 0 : (index >= maxBalls ? maxBalls - 1 : index)];
 
   /// Seconds since [reset]; drives spins and pulses.
   double time = 0;
@@ -115,14 +205,15 @@ class FxState {
   /// Per-player paddle flash (paddle hit), 0..1.
   final Float64List paddleFlash = Float64List(2);
 
-  /// Rendered ball position in simulation units (smoothed, see [trackBall]).
-  double ballX = 0;
-  double ballY = 0;
-  bool hasBall = false;
-
   /// Fraction of the remaining error corrected per frame: 1 = no smoothing
   /// (solo), ~0.4 smooths snapshot corrections over about three frames (duel).
   double ballSmoothing = 1;
+
+  /// Ball 0's rendered position and path, for the callers that only ever have
+  /// one ball (both previews, and every test written before ball counts).
+  double get ballX => balls[0].x;
+  double get ballY => balls[0].y;
+  bool get hasBall => balls[0].live;
 
   /// Localized countdown text ("3", "GO!"), or null when no countdown runs.
   String? countdownLabel;
@@ -133,14 +224,12 @@ class FxState {
   int _particleCursor = 0;
   int _popupCursor = 0;
 
-  int get trailCount => _trailCount;
+  /// Ball 0's trail length, for the same callers as [ballX].
+  int get trailCount => balls[0].trailCount;
 
-  /// Trail sample [i], 0 = oldest.
-  double trailX(int i) => _trail[_trailIndex(i) * 2];
-  double trailY(int i) => _trail[_trailIndex(i) * 2 + 1];
-
-  int _trailIndex(int i) =>
-      (_trailHead - _trailCount + i + trailLength * 2) % trailLength;
+  /// Ball 0's trail sample [i], 0 = oldest.
+  double trailX(int i) => balls[0].trailX(i);
+  double trailY(int i) => balls[0].trailY(i);
 
   /// Advances every effect by [dtSeconds] (clamped, so a stalled frame cannot
   /// teleport particles).
@@ -170,37 +259,38 @@ class FxState {
     }
   }
 
-  /// Follows the simulated ball, optionally smoothing the correction that a
-  /// duel snapshot introduces. Also feeds the trail.
-  void trackBall(Ball ball, {bool smooth = true}) {
-    if (!ball.active) {
-      hasBall = false;
-      ballX = ball.x;
-      ballY = ball.y;
-      _trailCount = 0;
-      return;
+  /// Follows every ball of the game, each with its own trail, optionally
+  /// smoothing the correction that a duel snapshot introduces.
+  ///
+  /// [balls] is `GameState.balls`, in index order — the same order the
+  /// simulation resolves them in and the order the tints and the HUD use, so
+  /// ball 0 is always ball 0 on screen. Slots past the end are released, which
+  /// is what stops a two-ball game's second trail from hanging in the air after
+  /// a one-ball game starts.
+  void trackBalls(List<Ball> balls, {bool smooth = true}) {
+    final n = balls.length < maxBalls ? balls.length : maxBalls;
+    ballCount = n < 1 ? 1 : n;
+    for (var i = 0; i < maxBalls; i++) {
+      if (i < n) {
+        this.balls[i].follow(
+          balls[i],
+          smooth: smooth,
+          smoothing: ballSmoothing,
+        );
+      } else {
+        this.balls[i].reset();
+      }
     }
-    final dx = ball.x - ballX;
-    final dy = ball.y - ballY;
-    final far = dx * dx + dy * dy > 0.0625; // > 0.25 units: a serve or a snap
-    if (!hasBall || far || !smooth) {
-      ballX = ball.x;
-      ballY = ball.y;
-      if (!hasBall || far) _trailCount = 0;
-      hasBall = true;
-    } else {
-      final k = ballSmoothing.clamp(0.05, 1.0);
-      ballX += dx * k;
-      ballY += dy * k;
-    }
-    _pushTrail(ballX, ballY);
   }
 
-  void _pushTrail(double x, double y) {
-    _trail[_trailHead * 2] = x;
-    _trail[_trailHead * 2 + 1] = y;
-    _trailHead = (_trailHead + 1) % trailLength;
-    if (_trailCount < trailLength) _trailCount++;
+  /// Follows a single ball as ball 0 and releases the rest; for the previews and
+  /// for callers that hold one [Ball] rather than a state.
+  void trackBall(Ball ball, {bool smooth = true}) {
+    ballCount = 1;
+    balls[0].follow(ball, smooth: smooth, smoothing: ballSmoothing);
+    for (var i = 1; i < maxBalls; i++) {
+      balls[i].reset();
+    }
   }
 
   /// Spawns [count] sparks around ([x], [y]) in a ring of [speed] units/s.
@@ -363,8 +453,13 @@ class FxState {
         );
         shake = 1;
         ringFlash = 1;
-        hasBall = false;
-        _trailCount = 0;
+        // One ball escaping ends the rally for every ball (SPEC §2.3): they are
+        // all recalled to the origin, so every trail is stale, not just the one
+        // that belongs to `e.ball`.
+        for (final b in balls) {
+          b.live = false;
+          b.clearTrail();
+        }
       case GameEventType.gameOver:
         shake = 1;
         ringFlash = 1;
@@ -382,11 +477,10 @@ class FxState {
     ringFlash = 0;
     countdownLabel = null;
     countdownPhase = 0;
-    hasBall = false;
-    ballX = 0;
-    ballY = 0;
-    _trailCount = 0;
-    _trailHead = 0;
+    ballCount = 1;
+    for (final b in balls) {
+      b.reset();
+    }
     for (var i = 0; i < paddleFlash.length; i++) {
       paddleFlash[i] = 0;
     }

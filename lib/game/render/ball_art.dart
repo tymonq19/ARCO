@@ -6,6 +6,12 @@
 /// one fills exactly the collision radius the painter hands it: a tail, a fringe
 /// or a spark may reach outside it, but the solid body never lies about where the
 /// ball is.
+///
+/// A game has one ball or two (SPEC §2.3), and one instance of a skin draws
+/// both: every entry point takes the ball's index, and the two cues that tell the
+/// balls apart — [CosmeticArt.tintFor] and [CosmeticArt.wakeScale] — are read
+/// from it. Nothing else about a skin changes with the index, so the second ball
+/// is unmistakably the same item, drawn in the same theme, at the same size.
 library;
 
 import 'dart:math' as math;
@@ -52,19 +58,22 @@ class OrbBallArt extends BallArt {
   }
 
   @override
-  void paintWake(Canvas canvas, ArenaGeometry geometry, FxState fx) {
+  void paintWake(Canvas canvas, ArenaGeometry geometry, FxState fx, int index) {
     if (theme.trailStyle == TrailStyle.none) return;
-    final n = math.min(fx.trailCount, FxState.orbTrailSamples);
+    final trail = fx.ball(index);
+    final window = (FxState.orbTrailSamples * wakeScale(index)).round();
+    final n = math.min(trail.trailCount, window);
     if (n < 2) return;
     // The window is the newest samples; index 0 of the buffer is the oldest.
-    final first = fx.trailCount - n;
+    final first = trail.trailCount - n;
     final base = ballRadius * scale;
+    final color = tintFor(index);
     if (theme.trailStyle == TrailStyle.comet) {
       for (var i = 0; i < n; i++) {
         final t = i / (n - 1);
-        _additive.color = theme.trail.withValues(alpha: 0.05 + 0.30 * t * t);
+        _additive.color = color.withValues(alpha: 0.05 + 0.30 * t * t);
         canvas.drawCircle(
-          geometry.toScreen(fx.trailX(first + i), fx.trailY(first + i)),
+          geometry.toScreen(trail.trailX(first + i), trail.trailY(first + i)),
           base * (0.25 + 0.65 * t),
           _additive,
         );
@@ -77,9 +86,9 @@ class OrbBallArt extends BallArt {
     _fill.maskFilter = null;
     for (var i = 0; i < n; i += 3) {
       final t = i / (n - 1);
-      _fill.color = theme.trail.withValues(alpha: 0.12 + 0.46 * t);
+      _fill.color = color.withValues(alpha: 0.12 + 0.46 * t);
       canvas.drawCircle(
-        geometry.toScreen(fx.trailX(first + i), fx.trailY(first + i)),
+        geometry.toScreen(trail.trailX(first + i), trail.trailY(first + i)),
         base * 0.30,
         _fill,
       );
@@ -94,16 +103,23 @@ class OrbBallArt extends BallArt {
     double dirX,
     double dirY,
     FxState fx,
+    int index,
   ) {
+    final tint = tintFor(index);
     if (theme.hasGlow) {
-      _bloom.color = theme.trail.withValues(alpha: 0.5 * theme.glow);
+      _bloom.color = tint.withValues(alpha: 0.5 * theme.glow);
       canvas.drawCircle(center, radius * 1.6, _bloom);
     }
     _fill
       ..maskFilter = null
       ..color = theme.ball;
     canvas.drawCircle(center, radius, _fill);
-    _fill.color = theme.ballCore;
+    // The core carries this ball's own tint, at the alpha the palette chose for
+    // it, so a second ball is told apart even when it is standing still on a
+    // serve. The silhouette — which is the hitbox — is the same disc for both.
+    _fill.color = index <= 0
+        ? theme.ballCore
+        : tint.withValues(alpha: theme.ballCore.a);
     canvas.drawCircle(center, radius * 0.55, _fill);
   }
 }
@@ -143,21 +159,20 @@ class CometBallArt extends BallArt {
   }
 
   @override
-  void paintWake(Canvas canvas, ArenaGeometry geometry, FxState fx) {
-    final n = collectWake(geometry, fx, maxLength: tailLength);
+  void paintWake(Canvas canvas, ArenaGeometry geometry, FxState fx, int index) {
+    final n = collectWake(geometry, fx, index, maxLength: tailLength);
     if (n < 3) return;
+    final tint = tintFor(index);
     final head = ballRadius * scale * headHalfWidth;
     buildPlume(_plume, n, head);
     buildPlume(_spine, n, head * 0.42, ease: 1.6);
     if (theme.hasGlow) {
-      _plumeBloom.color = theme.trail.withValues(alpha: 0.26 * theme.glow);
+      _plumeBloom.color = tint.withValues(alpha: 0.26 * theme.glow);
       canvas.drawPath(_plume, _plumeBloom);
     }
-    _plumeFill.color = theme.trail.withValues(
-      alpha: theme.hasGlow ? 0.34 : 0.40,
-    );
+    _plumeFill.color = tint.withValues(alpha: theme.hasGlow ? 0.34 : 0.40);
     canvas.drawPath(_plume, _plumeFill);
-    _plumeFill.color = (theme.hasGlow ? theme.ball : theme.trail).withValues(
+    _plumeFill.color = (theme.hasGlow ? theme.ball : tint).withValues(
       alpha: theme.hasGlow ? 0.55 : 0.85,
     );
     canvas.drawPath(_spine, _plumeFill);
@@ -171,9 +186,11 @@ class CometBallArt extends BallArt {
     double dirX,
     double dirY,
     FxState fx,
+    int index,
   ) {
+    final tint = tintFor(index);
     if (theme.hasGlow) {
-      _bloom.color = theme.trail.withValues(alpha: 0.55 * theme.glow);
+      _bloom.color = tint.withValues(alpha: 0.55 * theme.glow);
       canvas.drawCircle(center, radius * 1.7, _bloom);
     }
     _fill
@@ -183,7 +200,7 @@ class CometBallArt extends BallArt {
     // A coloured core behind the middle and a hot spot on the leading edge: the
     // nucleus reads as lit from the front, so the eye finds the direction of
     // travel before it finds the tail.
-    _fill.color = theme.trail.withValues(alpha: 0.85);
+    _fill.color = tint.withValues(alpha: 0.85);
     canvas.drawCircle(
       center.translate(-dirX * radius * 0.26, -dirY * radius * 0.26),
       radius * 0.5,
@@ -261,11 +278,17 @@ class PrismBallArt extends BallArt {
   }
 
   @override
-  void paintWake(Canvas canvas, ArenaGeometry geometry, FxState fx) {
-    final n = collectWake(geometry, fx, maxLength: wakeLength, maxPoints: 16);
+  void paintWake(Canvas canvas, ArenaGeometry geometry, FxState fx, int index) {
+    final n = collectWake(
+      geometry,
+      fx,
+      index,
+      maxLength: wakeLength,
+      maxPoints: 16,
+    );
     if (n < 3) return;
     final r = ballRadius * scale;
-    final edges = prismEdges(theme);
+    final edges = prismEdges(theme, index);
     for (var i = 0; i < edges.length; i++) {
       // The three colours leave the ball together and fan apart behind it.
       buildPlume(_plume, n, r * 0.34, ease: 0.9, spread: (i - 1) * r * 1.25);
@@ -282,8 +305,9 @@ class PrismBallArt extends BallArt {
     double dirX,
     double dirY,
     FxState fx,
+    int index,
   ) {
-    final edges = prismEdges(theme);
+    final edges = prismEdges(theme, index);
     final off = radius * split;
     canvas.save();
     canvas.translate(center.dx, center.dy);
@@ -336,16 +360,22 @@ class EmberBallArt extends BallArt {
   final Paint _spark = Paint()..style = PaintingStyle.fill;
   final Paint _bloom = Paint()..style = PaintingStyle.fill;
 
-  /// The body colour: the palette's hottest colour pulled a third of the way
-  /// towards its warmest, so a cinder is never the same colour as the star
-  /// pickup it would otherwise be mistaken for at twelve pixels.
-  Color _coal = const Color(0xFFFFFFFF);
+  /// The body colour of each ball: the palette's hottest colour for that ball
+  /// pulled a third of the way towards its warmest, so a cinder is never the
+  /// same colour as the star pickup it would otherwise be mistaken for at twelve
+  /// pixels. One per ball, because the two burn in different colours.
+  final List<Color> _coals = List<Color>.filled(
+    FxState.maxBalls,
+    const Color(0xFFFFFFFF),
+  );
 
   @override
   void onPrepare() {
     _bloom.maskFilter = glowFilter(glowSigmaWide(scale, theme.glow));
     _spark.blendMode = lightBlend;
-    _coal = Color.lerp(emberHot(theme), theme.heart, 0.35)!;
+    for (var i = 0; i < _coals.length; i++) {
+      _coals[i] = Color.lerp(emberHot(theme, i), theme.heart, 0.35)!;
+    }
   }
 
   /// Flicker, 0.24 … 1: two incommensurable sines, so it never finds a pulse.
@@ -356,17 +386,18 @@ class EmberBallArt extends BallArt {
       );
 
   @override
-  void paintWake(Canvas canvas, ArenaGeometry geometry, FxState fx) {
+  void paintWake(Canvas canvas, ArenaGeometry geometry, FxState fx, int index) {
     final n = collectWake(
       geometry,
       fx,
+      index,
       maxLength: 4,
       maxPoints: sparkLifeFrames + 1,
     );
     if (n < 4) return;
     final r = ballRadius * scale;
-    final hot = emberHot(theme);
-    final cool = emberSpark(theme);
+    final hot = emberHot(theme, index);
+    final cool = emberSpark(theme, index);
     final phase = fx.frames % sparkPeriodFrames;
     for (var k = 0; k < sparkCount; k++) {
       final age = phase + k * sparkPeriodFrames;
@@ -404,9 +435,11 @@ class EmberBallArt extends BallArt {
     double dirX,
     double dirY,
     FxState fx,
+    int index,
   ) {
     final f = _flicker(fx.time);
-    final hot = emberHot(theme);
+    final hot = emberHot(theme, index);
+    final coal = _coals[index.clamp(0, _coals.length - 1)];
     if (theme.hasGlow) {
       _bloom.color = hot.withValues(alpha: (0.35 + 0.30 * f) * theme.glow);
       canvas.drawCircle(center, radius * (1.7 + 0.5 * f), _bloom);
@@ -425,7 +458,7 @@ class EmberBallArt extends BallArt {
     // the silhouette never does, because the silhouette is the hitbox.
     _fill
       ..maskFilter = null
-      ..color = _coal.withValues(alpha: 0.75 + 0.25 * f);
+      ..color = coal.withValues(alpha: 0.75 + 0.25 * f);
     canvas.drawCircle(center, radius, _fill);
     _fill.color = theme.background.withValues(alpha: 0.42 + 0.18 * (1 - f));
     canvas.drawCircle(

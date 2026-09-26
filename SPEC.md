@@ -73,19 +73,40 @@ Math convention: arena is a unit circle centered at (0,0), radius `arenaRadius =
 | `escapeRadius` | 1.06 (ball center beyond this = escaped) |
 | `serveTicks` | 60 (1 s pause with ball hidden before each serve) |
 | `startLives` | 3, `maxLives` 5 |
-| `wallThickness` | 0.04 (capsule: half-thickness 0.02 + ballRadius) |
-| `wallLength` | 0.25 – 0.45 |
+| `wallThickness` | 0.04 (capsule: half-thickness 0.02 + ballRadius = collision radius 0.055) |
+| `wallLength` | 0.25 – 0.45 (**path** length, the same for every shape) |
 | `wallLifetime` | 9 – 14 s (in ticks) |
-| `wallFadeTicks` | 30 (no collision while `age < wallFadeTicks`) |
+| `wallFadeTicks` | 30 (no collision while `age < wallFadeTicks` nor while `age >= ttl - wallFadeTicks`) |
 | `pickupRadius` | 0.07 |
 | `pickupLifetime` | 8 s (480 ticks); client blinks it during the last 120 ticks |
 | `maxPickups` | 2 |
+| `minBallCount` / `maxBallCount` | 1 / 2 — the range `GameConfig.ballCount` accepts (1 = the classic game) |
+| `serveFan` | 0.7 rad between neighbouring balls of a multi-ball serve (wider than the 0.68 rad paddle) |
+| `wallStraightChance` / `wallBentChance` | 0.5 / 0.25; the remaining 0.25 are curved |
+| `wallBentMinAngle` – `wallBentMaxAngle` | 1.75 – 2.6 rad: interior angle of a bent wall's joint (100° – 149°) |
+| `wallCurveMinSweep` – `wallCurveMaxSweep` | 1.05 – 2.6 rad: angle a curved wall sweeps (60° – 149°) |
+| `wallCurveSegments` | 8 (so 9 vertices); worst-case chord sag 0.0023 units, under the 0.004 budget (a fifth of the wall's half-thickness), where 4 segments would sag 0.009 |
+| `wallResolvePasses` | 3 collision passes per substep for a shaped wall (only the first may bounce) |
+| `wallMinGap` | 0.11 = 2 × (0.02 + ballRadius): closest two walls' center lines may come, so every visible gap fits the ball |
+| `wallMinDistFromServePoint` | 0.09 = 0.02 + 2 × ballRadius: clearance every wall keeps from the origin |
 
 ### 2.3 Rules
 
-**Ball motion.** Sub-stepped: `n = max(1, ceil(speed * dt / 0.02))` (cap 8) substeps per tick. Each substep:
-move, then resolve in order: walls (capsule collision → reflect about segment normal, push out of penetration),
-paddle(s), pickups, escape.
+**Balls.** `config.ballCount` balls are in play: 1 (the classic game, the default) or 2. The count lives in the
+config, and therefore in the replay, because the server has to re-simulate the game that was actually played; which
+ball counts may be *ranked* is a leaderboard policy, not a verification one. Every rule below is written per ball,
+and wherever two balls could answer a question differently the answer is given here and nowhere else.
+
+Balls are resolved **in index order** within a tick: ball 0 moves and collides completely, then ball 1. That order is
+what decides a contested pickup and which escape ends a rally. With one ball every rule reduces to the one-ball rule
+bit for bit — `config` is not hashed and a single ball mixes its seven values exactly where the single ball always
+did — so a one-ball game with wall spawning suppressed hashes identically to the build from before shapes and ball
+counts existed. `test/golden_hash_test.dart` pins that against eight literal hashes.
+
+**Ball motion.** Per ball, sub-stepped from *that* ball's own speed: `n = max(1, ceil(speed * dt / 0.02))` (cap 8)
+substeps per tick. Each substep: move, then resolve in order: walls (capsule collision → reflect about the segment
+normal, push out of penetration), paddle(s), pickups, escape. A ball that escapes stops the tick's whole ball loop
+(see **Escape**).
 
 **Paddle bounce.** When the ball is moving outward (`dot(pos, vel) > 0`) and `|pos| >= paddleRing - 0.02 - ballRadius`
 and `|angleDiff(ballAngle, paddle.angle)| <= paddleHalfWidth + ballRadius / paddleRing` (angular slack): reflect the
@@ -94,42 +115,91 @@ velocity about the inward radial normal, then apply "english": rotate the new di
 edge deflects the ball sideways; sign chosen so that the ball is deflected *away* from the paddle edge it hit).
 Then ensure the direction points inward: if `dot(dir, -pos/|pos|) < 0.25`, rotate it toward the inward normal until it is.
 Pull the ball back to `|pos| = paddleRing - 0.02 - ballRadius`. `speed = min(speed * hitSpeedFactor, maxSpeed)`.
-Only one paddle bounce per tick. Emit `paddleHit(player)`.
+**One paddle bounce per ball per tick**: each ball bounces at most once per tick and off at most one paddle, but a
+paddle bounces *every* ball that reaches it in the same tick — a paddle the second ball would pass through is not a
+paddle. Both bounces score and both raise the same player's combo. Emit `paddleHit(player, ball)`.
 
-**Serve.** `phase = serving`, `serveTimer = serveTicks`, ball inactive at (0,0). When the timer hits 0: `phase = playing`,
-ball active, `speed = min(baseSpeed + 0.01 * (tick / 60), 0.95)`, direction: solo → random angle; duel → toward the
-receiving player's half: center angle of that half ± `rng.nextRange(-0.9, 0.9)`. Emit `serve`.
+**Serve.** `phase = serving`, `serveTimer = serveTicks`, every ball inactive at (0,0). When the timer hits 0:
+`phase = playing`, every ball active, `speed = min(baseSpeed + 0.01 * (tick / 60), 0.95)` — the same speed for all of
+them. **One** direction is drawn (solo → random angle; duel → toward the receiving player's half: center angle of that
+half ± `rng.nextRange(-0.9, 0.9)`) and the balls are fanned symmetrically around it: ball `i` of `n` leaves along
+`angle + (2i − (n − 1)) × serveFan / 2`. With `n == 1` the offset is 0 and the drawn angle is used as-is, so a
+two-ball serve consumes exactly the randomness a one-ball serve consumes. Emit one `serve(receiver)` for the whole
+rally (`ball == -1`).
 
 **Escape.** `|pos| > escapeRadius`: solo → `lives -= 1`, `combo = 0`; duel → the player whose half contains the
-escape angle loses a life (`sin(angle) < 0` → player 0 (bottom), else player 1 (top)), their combo resets; emit
-`lifeLost(player)`. If that player's lives == 0 → `phase = gameOver`, `winner` (duel) = other player; emit `gameOver`.
-Else → serve (in duel, toward the player who lost).
+**escaping ball's** angle loses a life (`sin(angle) < 0`, i.e. `y < 0` → player 0 (bottom), else player 1 (top)),
+their combo resets; emit `lifeLost(player, ball)`. The escape ends the rally for **every** ball: the tick's ball loop
+stops there, so two balls can never cost two lives in one tick and no ball keeps flying while the next serve is
+pending. If that player's lives == 0 → `phase = gameOver`, `winner` (duel) = other player, every ball frozen inactive
+at (0,0) with `speed = 0` and `owner = -1`; emit `gameOver`. Else → serve (in duel, toward the player who lost), which
+recalls every ball to the origin.
 
-**Walls.** Spawned when `nextWallIn` reaches 0, if `walls.length < maxWalls(t)` where maxWalls = 1 for t < 20 s,
-2 for t < 60 s, 3 after. Center sampled inside radius 0.55, orientation `rng.nextRange(0, tau)`, length in range,
-must be ≥ 0.2 from the ball and ≥ 0.15 from other walls' centers (retry up to 8 times, else skip). `ttl` random in
-lifetime range; `age` counts up; wall removed when `age >= ttl`. No collision while `age < wallFadeTicks` and during
-the last `wallFadeTicks` (fading out). Next spawn interval: `rng.nextRange(7, 9)` s for t < 30 s, `(4, 6)` s after.
-Bounce → emit `wallHit`, score `+5 × mult` to the ball owner (if any).
+**Walls.** A wall is an open **polyline**. `points` is a flat `[x0, y0, x1, y1, …]` vertex list, fixed for the wall's
+life, and the ball is collided against the whole chain — one capsule per consecutive pair of vertices, pushed out of
+the closest point over the *whole* polyline, so a hit exactly on a joint bounces off the shared vertex like a capsule
+cap instead of picking one of the two segments. `shape` records how the polyline was built, which is what a renderer
+needs to draw a curve as a curve; the collision never looks at it:
+
+- `straight` — 2 vertices, 1 segment: center ± dir(angle) × length / 2, bit for bit the pre-shape formula.
+- `bent` — 3 vertices: two arms of `length / 2` from a joint that sits on the wall's center, `wallBentMinAngle` ..
+  `wallBentMaxAngle` apart, opening toward the wall's angle.
+- `curved` — `wallCurveSegments + 1` vertices on a circular arc of radius `length / sweep` sweeping
+  `wallCurveMinSweep` .. `wallCurveMaxSweep`, tangent to the wall's angle at its midpoint and bending to the left of
+  it (the angle is drawn uniformly, so that is the same family of shapes as bending either way). The middle vertex is
+  the arc midpoint and the wall's center.
+
+`length` is the **path** length for every shape and every vertex lies within `length / 2` of the center, so no shape
+takes up more room than the straight wall it replaced and the spawn clearances keep the meaning they were chosen for.
+A straight wall is resolved in one pass — its push-out onto the capsule surface is exact — while a shaped one gets up
+to `wallResolvePasses`, because on the concave side of a joint leaving the nearest segment can put the ball inside its
+neighbour; only the first pass may bounce the ball (and score), the rest only correct the position, so no ball is ever
+reflected twice by one wall in one substep.
+
+**No wall of any shape can be tunnelled**, and the argument does not depend on the segment count: a straight path
+that crosses a polyline at a point `c` has both endpoints farther from `c` than from the polyline, so a path whose
+endpoints are both outside the capsule (radius 0.055) is longer than 0.11 — and the longest substep the simulation can
+take is 0.0133.
+
+Spawned when `nextWallIn` reaches 0, if `walls.length < maxWalls(t)` where maxWalls = 1 for t < 20 s, 2 for t < 60 s,
+3 after. Per attempt the rng draws, in this order: center radius (`0.55 × sqrt(u)`), center angle, orientation
+`rng.nextRange(0, tau)`, path length in range, a shape roll (`< wallStraightChance` → straight; the next
+`wallBentChance` → bent; else curved) and — for a bent or curved wall only — its one shape parameter. The finished
+polyline must then clear, measured along its whole length rather than along a chord: ≥ 0.2 from **every** ball,
+≥ `wallMinDistFromServePoint` from the origin (every serve starts there, so a wall covering it would serve the balls
+from inside solid geometry), ≥ 0.15 from other walls' centers, and ≥ `wallMinGap` from every other wall's polyline
+with no crossings (two crossing straight lines still read as two walls; two crossing curves do not). Retry up to
+8 times, else skip the spawn — and redraw the interval either way. `ttl` random in lifetime range; `age` counts up;
+wall removed when `age >= ttl`. No collision while `age < wallFadeTicks` nor while `age >= ttl - wallFadeTicks`
+(fading out), and `alpha` is 1 **exactly** while the wall collides, so a wall the player can see through is always one
+the ball can pass through and a wall that looks solid always is. Next spawn interval: `rng.nextRange(7, 9)` s for
+t < 30 s, `(4, 6)` s after. Bounce → emit `wallHit(owner, ball)`, score `+5 × mult` to *that ball's* owner (if any).
 
 **Pickups.** Spawned when `nextPickupIn` reaches 0 and `pickups.length < maxPickups`: position inside radius 0.6,
-≥ 0.15 from other pickups, ≥ 0.2 from the ball, ≥ 0.12 from any wall segment. Type: heart with probability 0.25 if the
-(solo: player / duel: any player) has lives < maxLives, else star. Next interval `rng.nextRange(5, 8)` s.
-Collected when `dist(ball, pickup) < pickupRadius + ballRadius` by `ball.owner` (solo: always player 0; duel: last
-hitter, `-1` if none — then the pickup is simply removed). Heart → `lives = min(maxLives, lives + 1)`;
-star → `score += 100 × mult`. Emit `pickup(player, type)`. Expired pickups emit `pickupExpire`.
+≥ 0.15 from other pickups, ≥ 0.2 from **every** ball, ≥ 0.12 from any wall segment. Type: heart with probability 0.25
+if the (solo: player / duel: any player) has lives < maxLives, else star. Next interval `rng.nextRange(5, 8)` s.
+Collected when `dist(ball, pickup) < pickupRadius + ballRadius`, credited to **that ball's** `owner` (solo: always
+player 0; duel: the last paddle to hit *that* ball, `-1` if none — then the pickup is simply removed, even when the
+other ball has an owner). It is removed on first contact, so it can never pay twice, and a pickup both balls reach in
+the same substep goes to ball 0. Heart → `lives = min(maxLives, lives + 1)`; star → `score += 100 × mult`.
+Emit `pickup(player, type, ball)`. Expired pickups emit `pickupExpire`.
 
-**Scoring.** Per player: `score`, `combo` (consecutive own paddle hits, reset on that player's life loss),
-`multiplier = min(1 + combo ~/ 5, 8)`. Paddle hit: `combo += 1` then `score += 10 × multiplier`.
-Star: `+100 × multiplier`. Wall bounce: `+5 × multiplier` (owner). Solo only: `+1` every 60 ticks while playing.
+**Scoring.** Per **player**, never per ball: `score`, `combo` (consecutive own paddle hits, reset on that player's
+life loss), `multiplier = min(1 + combo ~/ 5, 8)`. Paddle hit: `combo += 1` then `score += 10 × multiplier`, so two
+hits in the same tick are each scored with the multiplier as it stands after that hit's own increment.
+Star: `+100 × multiplier`. Wall bounce: `+5 × multiplier` — both at the multiplier of the ball owner being paid, which
+in a duel need not be the player with the larger combo. Solo only: `+1` every 60 ticks while playing.
 
 **Duel halves.** Player 0 defends the **bottom** half (angles in (π, 2π), i.e. y < 0); player 1 the **top** half.
 Paddle center clamps: P0 ∈ [π + paddleHalfWidth, tau − paddleHalfWidth]; P1 ∈ [paddleHalfWidth, π − paddleHalfWidth].
 Start angles: P0 = 3π/2, P1 = π/2. In solo the single paddle roams the whole circle, start angle 3π/2.
 (The client renders player 1's view rotated by 180° so each player sees their own paddle at the bottom.)
 
-**Ball owner.** `ball.owner` = index of the last paddle that hit it; `-1` after a serve. Solo: always 0 after first hit
-(pickups in solo are credited to player 0 regardless).
+**Ball owner.** `ball.owner` = index of the last paddle that hit **that ball**; `-1` after a serve, and independent
+per ball — in a duel the two balls can belong to different players at the same time. Solo: always 0 after that ball's
+first hit (pickups in solo are credited to player 0 regardless). While `phase == serving` in a duel the field carries
+the **receiving** player instead (drawn in `GameState.initial`, then the loser of the previous point), because the
+serve aims at that player's half; the serve itself resets it to -1.
 
 ### 2.4 Input
 
@@ -152,32 +222,54 @@ Then normalize (solo) or clamp (duel).
 enum GameMode { solo, duel }
 enum Phase { serving, playing, gameOver }
 enum PickupType { heart, star }
+enum WallShape { straight, bent, curved }   // how a wall's polyline was built (§2.3)
 enum GameEventType { serve, paddleHit, wallHit, pickup, pickupExpire, wallSpawn, wallExpire, lifeLost, gameOver, tick }
 
-class GameConfig { final GameMode mode; final int seed; const GameConfig({required this.mode, required this.seed});
-  int get playerCount; Map<String, dynamic> toJson(); factory GameConfig.fromJson(Map<String, dynamic>); }
+class GameConfig { final GameMode mode; final int seed; final int ballCount;   // 1..2, default 1
+  const GameConfig({required this.mode, required this.seed, this.ballCount = minBallCount});
+  int get playerCount; double get maxSpeed; Map<String, dynamic> toJson();
+  factory GameConfig.fromJson(Map<String, dynamic>);   // FormatException on an unknown mode or a ballCount
+}                                                      // outside minBallCount..maxBallCount; missing 'n' means 1
 
-class GameEvent { final GameEventType type; final int player; /* -1 if none */ final double x, y; final PickupType? pickup; }
+class GameEvent { final GameEventType type; final int player; /* -1 if none */ final double x, y;
+  final PickupType? pickup; final int ball; /* index into GameState.balls, -1 if the event belongs to no one ball */ }
 
 class Ball { double x, y, vx, vy, speed; int owner; bool active; }
 class Paddle { double angle; }
 class Player { int lives, score, combo; Paddle paddle; int get multiplier; }
-class Wall { final int id; final double x1, y1, x2, y2; final int ttl; int age; bool get solid; double get alpha; }
+class Wall {                                 // an open polyline of >= 2 vertices, collided as a chain of capsules
+  final int id; final WallShape shape;
+  final List<double> points;                 // flat [x0, y0, x1, y1, ...], in order along the wall, never mutated
+  final int ttl; int age;
+  int get pointCount; int get segmentCount;  // segmentCount == pointCount - 1
+  double pointX(int i); double pointY(int i);
+  double get centerX; double get centerY;    // the point the wall was built around (the joint / the arc midpoint)
+  bool get solid;                            // age >= wallFadeTicks && age < ttl - wallFadeTicks
+  double get alpha;                          // 1 exactly while solid
+  Wall({required int id, required WallShape shape, required List<double> points, required int ttl, int age = 0});
+  Wall.segment({required int id, required double x1, y1, x2, y2, required int ttl, int age = 0});  // straight
+}
 class Pickup { final int id; final PickupType type; final double x, y; int ttl; }
 
 class GameState {
-  final GameConfig config; int tick; Phase phase; List<Player> players; Ball ball;
+  final GameConfig config; int tick; Phase phase; List<Player> players;
+  final List<Ball> balls;                   // config.ballCount balls, resolved in index order within a tick (§2.3)
   List<Wall> walls; List<Pickup> pickups; int serveTimer, nextWallIn, nextPickupIn, nextId; int winner; /* -1 */
   Prng rng; final List<GameEvent> events; // filled during step(); cleared at the start of each step()
   factory GameState.initial(GameConfig config);
+  void prepareServe(int receiver);          // serving phase, every ball parked at the origin; consumes no randomness
   GameState clone();
   int hash();
   Map<String, dynamic> toJson();            // compact snapshot (see §3.2), events NOT included
-  factory GameState.fromJson(Map<String, dynamic> json);
+  factory GameState.fromJson(Map<String, dynamic> json);   // FormatException when balls.length != cfg.n
   double get elapsedSeconds;
 }
 
-class Simulation { static void step(GameState s, List<PlayerInput> inputs); /* inputs.length == playerCount */ }
+class Simulation { static void step(GameState s, List<PlayerInput> inputs); /* inputs.length == playerCount */
+  static List<double> wallPoints(WallShape shape, double cx, cy, angle, length, parameter);  // the vertices (§2.3)
+  static double wallDist2(Wall wall, double px, double py);   // squared distance to the polyline
+  static int maxWalls(int tick);
+}
 
 class InputLog {  // delta-encoded per-tick inputs for ONE player
   void record(int tick, PlayerInput input);   // stores only when different from the previous value
@@ -188,7 +280,8 @@ class InputLog {  // delta-encoded per-tick inputs for ONE player
 }
 
 class Replay {
-  static const int version = 1;
+  static const int version = 2;   // 1 -> 2: wall shapes + ballCount changed the sim, so a v1 replay cannot be
+                                  // re-simulated at all and is refused with `unsupported_version` (update the app)
   final GameConfig config; final List<InputLog> inputs; final int finalTick; final int claimedScore;
   Map<String, dynamic> toJson(); factory Replay.fromJson(Map<String, dynamic>); String encode(); factory Replay.decode(String);
 }
@@ -196,18 +289,26 @@ class Replay {
 class ReplayResult { final bool ok; final String? reason; final int score; final int ticks; final int hash; final int lives; }
 class ReplayVerifier {
   static const int maxTicks = 216000; // 1 hour
-  static ReplayResult verify(Replay r);   // re-simulates from config.seed applying inputs; ok iff phase==gameOver
-                                          // at or before finalTick (solo), finalTick <= maxTicks, and score == claimedScore
+  static ReplayResult verify(Replay r);   // re-simulates from config.seed (including config.ballCount) applying
+                                          // inputs; ok iff phase==gameOver at exactly finalTick (solo),
+                                          // finalTick <= maxTicks, and score == claimedScore. Reasons:
+                                          // unsupported_version | wrong_mode | bad_config | bad_inputs | too_long |
+                                          // not_finished | early_finish | score_mismatch
 }
 
 // Protocol helpers (lib/src/protocol.dart) — JSON message builders + parsers shared by client and server, see §3.
 ```
 
 Snapshot JSON (`GameState.toJson`) is compact: keys `t` (tick) `ph` (phase index) `st` (serveTimer) `win`
-`b` [x,y,vx,vy,speed,owner,active?1:0] `p` [[angle,lives,score,combo],…] `w` [[id,x1,y1,x2,y2,age,ttl],…]
-`k` [[id,type,x,y,ttl],…] `nw` `np` `nid` `rng` (prng state), `cfg` {m,s}. Doubles serialized as-is (JSON
-round-trips doubles exactly in Dart when using `jsonEncode`/`jsonDecode`; ints that are whole doubles must be
-restored with `.toDouble()`).
+`b` [[x,y,vx,vy,speed,owner,active?1:0],…] (one entry per ball, in index order) `p` [[angle,lives,score,combo],…]
+`w` [[id,shapeIndex,age,ttl,x0,y0,x1,y1,…],…] (the four fixed fields then the flat vertex list, so a straight wall
+still costs exactly four coordinates) `k` [[id,type,x,y,ttl],…] `nw` `np` `nid` `rng` (prng state),
+`cfg` {m,s,n}. `GameState.fromJson` throws `FormatException` when `b.length != cfg.n`, because a state whose ball
+count disagrees with its config would step differently on the two sides of the wire; `GameConfig.fromJson` throws on
+a ball count outside `minBallCount..maxBallCount` and treats a missing `n` as 1 (a snapshot written before ball
+counts existed). Events are serialized separately as `[type,player,x,y,pickup,ball]` (§3), and a five-element event
+decodes as `ball == -1`. Doubles serialized as-is (JSON round-trips doubles exactly in Dart when using
+`jsonEncode`/`jsonDecode`; ints that are whole doubles must be restored with `.toDouble()`).
 
 ### 2.6 Tests (`packages/arco_core/test`)
 
@@ -220,33 +321,74 @@ input encode/decode round-trip for all values, InputLog delta semantics, Replay 
 accepts a real recorded game and rejects a tampered score / missing gameOver / too many ticks, toJson/fromJson
 round-trip preserves hash.
 
+Since wall shapes and ball counts arrived, also:
+
+- `golden_hash_test.dart` — the **one-ball invariant**. A one-ball game with wall spawning suppressed (`nextWallIn`
+  assigned a huge value after `GameState.initial`, which consumes no randomness) must reproduce eight hashes
+  captured from the build before the change: two modes × four seeds, 12000 ticks each, as literal constants. The
+  wall-bearing hashes of that build are deliberately **not** pinned — a shaped wall necessarily changes both the
+  geometry and the rng draw sequence, so pinning them would pin the single-segment wall that was replaced.
+- `wall_shape_test.dart` — the geometry of all three shapes against the whole spawnable (length, parameter) grid;
+  that `wallCurveSegments` is the smallest count meeting both the sagitta and the bounce-direction budgets (and that
+  half as many fails both); the no-tunnelling argument as arithmetic (longest substep < capsule thickness, and no
+  other teleport can reach a wall); hammering at maxSpeed from every direction and at each of the three places a
+  capsule chain could leak — a joint, the concave side of a joint, the inside of a curve; the fade windows, including
+  the exact tick each opens and closes; the spawn mix, the shape-parameter ranges, the serve-point clearance,
+  `wallMinGap`, and a skipped spawn.
+- `multi_ball_test.dart` — every rule two balls made necessary (see §2.3): the fan serve and that it costs no extra
+  randomness, an escape while the other ball is live, one paddle bouncing two balls in a tick, pickup ownership and
+  index-order precedence, combo and multiplier, spawns clearing every ball, the two-ball snapshot and replay, the
+  `FormatException`s on a ball count that cannot be honoured, and long two-ball games staying deterministic through
+  `clone()` and a JSON round trip.
+- `tool/det_check.dart` — the cross-backend check, which must print byte-identical output from `dart run`, a native
+  executable and `dart compile js` under node. It runs a one-ball duel, a two-ball solo game, a two-ball duel (all
+  three report how many straight / bent / curved walls they spawned, so a zero would show the check is not covering
+  shapes) and a grid that bounces a max-speed ball off every shape, orientation, length and shape parameter the game
+  can spawn.
+
 ---
 
 ## 3. Network protocol (WebSocket, JSON text frames, one message per frame)
 
 Endpoint: `ws(s)://HOST/ws`. Room code alphabet `ABCDEFGHJKLMNPQRSTUVWXYZ23456789` (no 0/O/1/I), 4 chars.
-`protocolVersion = 1`. All builders/parsers live in core `lib/src/protocol.dart` (`ClientMsg`, `ServerMsg` sealed
+`protocolVersion = 2` (1 → 2 with wall shapes and `ballCount`: the snapshot and the replay shapes both changed, so a v1 client and a v2 server cannot share a simulation). All builders/parsers live in core `lib/src/protocol.dart` (`ClientMsg`, `ServerMsg` sealed
 classes with `toJson()` / `parse(Map)`), so the client and server never hand-write message shapes.
 
 Client → Server
-- `{"t":"hello","v":1,"name":"Tymek"}` — must be first. Name rules as in §4.2.
-- `{"t":"create"}` → `room` message. `{"t":"join","code":"KX7Q"}` → `room` or `error`.
+- `{"t":"hello","v":2,"name":"Tymek"}` — must be first (`v` is `protocolVersion`). Name rules as in §4.2.
+- `{"t":"create","n":2}` → `room` message. `n` is the **ball count** the room plays with (`GameConfig.ballCount`,
+  1..2, §2.3); it is optional and absent means 1, which is what a client that does not know about ball counts is
+  asking for and the only game it can draw. A value outside 1..2 (or one that is not an integer) is
+  `{"t":"error","code":"bad_balls"}` and **no room is created** — a room quietly opened with a different ball
+  count would put both players in a match neither chose, and the creator's own screen would disagree with the
+  server for the whole game. `{"t":"join","code":"KX7Q"}` → `room` or `error`; the joiner does not choose the
+  count, it is told it (below).
 - `{"t":"input","tick":123,"i":17}` — `i` = `PlayerInput.encode()`. Sent every tick the input changes, and at
   least every 10 ticks (keep-alive). Server applies the latest received input; ignores `tick` older than last.
-- `{"t":"rematch"}` — after `over`; when both players sent it → new `start`.
+- `{"t":"rematch"}` — after `over`; when both players sent it → new `start`, with the **same** `n`.
 - `{"t":"leave"}`, `{"t":"ping","c":<client ms>}`.
 
 Server → Client
-- `{"t":"welcome","v":1}` after hello.
-- `{"t":"room","code":"KX7Q","slot":0|1,"names":["Tymek",null]}` (also re-sent to both when the peer joins).
-- `{"t":"start","seed":123456,"countdown":180,"names":["A","B"]}` — sim tick 0 begins `countdown` server ticks
-  after this message; clients show 3-2-1.
-- `{"t":"snap","tick":N,"s":<GameState.toJson()>,"ev":[[type,player,x,y,pickup?],...]}` every 3 ticks (20 Hz).
-  `ev` contains the events accumulated since the previous snapshot.
+- `{"t":"welcome","v":2}` after hello.
+- `{"t":"room","code":"KX7Q","slot":0|1,"names":["Tymek",null],"n":2}` (also re-sent to both when the peer joins).
+  `n` is the room's ball count, and it is on **every** `room` message even when it is 1, so a client can tell from
+  any room message that it is talking to a server that knows about ball counts. This is where the joining player
+  learns what they joined, **before** the countdown starts.
+- `{"t":"start","seed":123456,"countdown":180,"names":["A","B"],"n":2}` — sim tick 0 begins `countdown` server
+  ticks after this message; clients show 3-2-1. `seed` **and** `n` are what both ends need to build the same
+  `GameConfig`; a client that ignores `n` still converges, because the config is inside every `snap`
+  (`s.cfg.n`), but it would draw the countdown for the wrong game.
+- `{"t":"snap","tick":N,"s":<GameState.toJson()>,"ev":[[type,player,x,y,pickup?,ball],...]}` every 3 ticks
+  (20 Hz). `ev` contains the events accumulated since the previous snapshot; `ball` is the index into
+  `GameState.balls` the event came from, or -1 for an event that belongs to no single ball (§2.5). A five-element
+  event decodes as `ball == -1`.
 - `{"t":"over","winner":0|1,"scores":[a,b]}`; `{"t":"peer_left"}`; `{"t":"pong","c":<echo>,"tick":N}`;
-  `{"t":"error","code":"bad_code|room_not_found|room_full|not_in_room|bad_message|rate_limited"}`.
+  `{"t":"error","code":"bad_code|bad_balls|room_not_found|room_full|not_in_room|bad_message|rate_limited"}`.
 
 Room lifecycle: created on `create`; `waiting` → `countdown` → `playing` → `over` → (rematch) `countdown` …
+The ball count is chosen once, by the creator, and is fixed for the room's whole life, **rematches included**: it
+is what the joining player was shown before they agreed to play, so changing it between games would be changing
+the game underneath them. A different count is a different room.
 If a player disconnects: the other receives `peer_left`, the room is destroyed. Rooms idle (waiting) > 10 min are
 destroyed. The server steps every playing room at 60 Hz from a single periodic timer (catch-up loop with a cap of
 5 ticks per timer callback to avoid spiral of death). Max 500 rooms; max 4 rooms created per IP per minute.
@@ -270,17 +412,29 @@ by more than 0.2 rad (then it snaps). Rendering smooths the ball position over ~
   whether the one-time unlock can be bought or restored (§4.9) — and `ads` whether it credits rewarded ads
   (§4.10), for the same reason: the app offers exactly what will work instead of a button that cannot be pressed.
   Neither says anything about one player; whether *this* player is premium is `GET /api/shop/inventory`.
-- `GET /api/leaderboard?period=all|week|day&country=PL&limit=100` → `{"entries":[{"rank":1,"name":"…",
-  "score":1234,"seconds":183,"createdAt":"2026-09-22T12:00:00Z","playerId":"…","country":"PL"}]}` (limit ≤ 100;
-  ordered by score desc, createdAt asc). `playerId` is present only on runs owned by a player (§4.4); its absence
-  means an anonymous run, which is what every row stored before player identity existed is. `country` is present
-  only on runs that carried a usable country code (§4.6). The optional `country` parameter restricts the board to
-  one country and **composes** with `period`; `rank` is then the position within that board, 1..N. An unusable
-  country is `400 {"ok":false,"error":"invalid_country"}` — unlike on a submission, where it is ignored (§4.6).
+- `GET /api/leaderboard?period=all|week|day&country=PL&balls=1|2&limit=100` → `{"balls":1,"entries":[{"rank":1,
+  "name":"…","score":1234,"seconds":183,"createdAt":"2026-09-22T12:00:00Z","playerId":"…","country":"PL"}]}`
+  (limit ≤ 100; ordered by score desc, createdAt asc). `playerId` is present only on runs owned by a player
+  (§4.4); its absence means an anonymous run, which is what every row stored before player identity existed is.
+  `country` is present only on runs that carried a usable country code (§4.6). The optional `country` parameter
+  restricts the board to one country, `balls` names which **board** (game) it is, and all three **compose** with
+  `period`; `rank` is then the position within that board, 1..N. `balls` is absent → the one-ball board, and the
+  answer says which board it is in the envelope rather than repeating it on every row. An unusable country is
+  `400 {"ok":false,"error":"invalid_country"}` — unlike on a submission, where it is ignored (§4.6); a `balls`
+  outside 1..2 is `400 {"ok":false,"error":"invalid_balls"}` for the same reason.
 - `POST /api/scores` body `{"name":"…","replay":<Replay.toJson()>,"country":"PL"}` → `201 {"ok":true,"id":"…",
-  "score":1234,"rank":7,"country":"PL","countryRank":2}`
+  "score":1234,"rank":7,"balls":1,"country":"PL","countryRank":2}`
   or `400 {"ok":false,"error":"invalid_json|invalid_name|offensive_name|invalid_replay|replay_mismatch|unsupported_version"}`
   or `413` body > 2 MB or `429` (> 10 submissions / IP / minute).
+  `balls` is the board the run was filed on (§4.6) and both ranks are positions on **that** board. There is no
+  `balls` **request** field: the board comes from `replay.cfg.n`, the config the server re-simulated, so a run
+  cannot be filed on a board it was not played on. A replay whose ball count this build cannot simulate is
+  `invalid_replay` with the range in `detail` — it is refused where the replay is decoded, before anything runs.
+  `unsupported_version` means **the app is too old for this server**, not that the score was refused: the replay
+  was recorded by a different build of the simulation, so it cannot be re-simulated at all. It is checked straight
+  after the parse — before the tick bound, the input-log bound, the fingerprint and the re-simulation, and before
+  the `VERIFY_REPLAYS` switch — so an old client is never told its game was rejected when what is wrong is its
+  version. A client should render it as *update the app*.
   `country` is optional and is a **hint** the client derives from the device locale (§4.6): a usable ISO 3166-1
   alpha-2 code is stored and echoed back with the rank it took nationally, and anything else is dropped — both
   keys are then absent and the run is stored and ranked globally exactly as before. `offensive_name` is the
@@ -293,11 +447,13 @@ by more than 0.2 rad (then it snaps). Rendering smooths the ball position over ~
   An authenticated submission also earns shop tokens (§4.8) and the `201` body carries `"tokens":N` (what this
   run paid) and `"tokenBalance":N` (the wallet afterwards). Both keys are absent for an anonymous submission,
   which has no wallet to pay into.
-- `GET /api/leaderboard/rank?score=N&period=…&country=PL` → `{"rank":K}` (1 + number of scores > N, within the
-  period and the country when given) — used to show rank when offline submission is deferred. Optional.
-  `400 invalid_country` for an unusable code, as on `GET /api/leaderboard`.
+- `GET /api/leaderboard/rank?score=N&period=…&country=PL&balls=1|2` → `{"rank":K,"balls":N}` (1 + number of
+  scores > N, within the period, the country and the board when given) — used to show rank when offline submission
+  is deferred. Optional. `400 invalid_country` / `400 invalid_balls` for an unusable value, as on
+  `GET /api/leaderboard`.
 - `POST /api/account/link`, `POST /api/account/unlink`, `DELETE /api/players/me` — Sign in with Apple / Google and
-  account deletion (§4.5).
+  account deletion (§4.5). The `link` response carries the same standing `GET /api/players/me` does, `boards`
+  included, because a merge changes it (§4.6).
 - `GET /api/shop/catalogue`, `GET /api/shop/inventory`, `POST /api/shop/buy`, `POST /api/shop/equip` — the
   cosmetic catalogue, the Spark wallet, ownership and equipping (§4.8). All four require the credentials of §4.4.
   The catalogue also advertises the one-time unlock and both it and the inventory carry `premium` (§4.9).
@@ -330,11 +486,14 @@ the filter of §4.7, which is a separate check with its own error code.
 
 ### 4.3 Storage
 SQLite via the `sqlite3` pub package (system library). Table `scores(id TEXT PK, name TEXT, score INT, ticks INT,
-seed INT, created_at TEXT ISO-8601 UTC, ip_hash TEXT, hash INT, player_id TEXT NULL, country TEXT NULL)`. Indexes
-on `(score DESC, created_at)`, `(player_id, score DESC, created_at)` and `(country, score DESC, created_at)` — the
-second makes "this player's entries" and "this player's best" a prefix scan of one player's slice, the third makes
-a national top 100 (§4.6) a prefix scan of one country's. `player_id` references `players(id)` (§4.4) and is NULL
-for an anonymous run; `country` is NULL for a run that carried no usable country code.
+seed INT, created_at TEXT ISO-8601 UTC, ip_hash TEXT, hash INT, player_id TEXT NULL, country TEXT NULL,
+balls INT NOT NULL DEFAULT 1)`. Indexes on `(score DESC, created_at)`, `(player_id, score DESC, created_at)`,
+`(country, score DESC, created_at)`, `(balls, score DESC, created_at)` and
+`(balls, country, score DESC, created_at)` — the second makes "this player's entries" and "this player's best" a
+prefix scan of one player's slice, the third makes a national top 100 (§4.6) a prefix scan of one country's, and
+the last two do the same inside one board so a board's top 100 needs no sort. `player_id` references
+`players(id)` (§4.4) and is NULL for an anonymous run; `country` is NULL for a run that carried no usable country
+code; `balls` is the ball count the run was played with (§4.6) and is never NULL, because it is never unknown.
 Tables `player_secrets`, `player_aliases` and `id_token_uses` belong to identity and accounts; see §4.4 and §4.5.
 Tables `player_wallets`, `player_items`, `player_equipped` and `token_awards` belong to cosmetic items; see §4.8.
 Table `purchases` is the ledger of store payments and the whole of the premium entitlement; see §4.9. Table
@@ -346,7 +505,7 @@ CORS: allow all origins for `/api/*` (needed by the web build); `Authorization` 
 The schema is versioned in SQLite's `user_version` and upgraded in place on open. A file written by an older
 build reads as version 0 and is migrated without losing a row: existing scores keep their values and gain
 `player_id = NULL`, so they keep appearing on the leaderboard as anonymous runs. A file from a *newer* build is
-refused rather than opened. Current version: **7**.
+refused rather than opened. Current version: **8**.
 
 Version 2 (§4.5) moves player credentials out of `players.secret_hash` into `player_secrets`, so one player can
 hold one credential per device, and adds `player_aliases` and `id_token_uses`. It also **drops**
@@ -383,6 +542,16 @@ entitlement this ledger now answers is *derived* from it, so an upgraded databas
 identically, and a legacy `arco.sparks.*` row still grants nothing, which is the correct reading of it: it paid in
 Sparks, and those Sparks are already in the wallet. The index is dropped and recreated, because
 `ALTER TABLE … RENAME TO` leaves an index pointing at the renamed table under its old name.
+
+Version 8 (§4.6) adds `scores.balls` and its two indexes. **One column, `NOT NULL DEFAULT 1`, and nothing else
+changes shape**, so every row already stored reads `balls = 1` — and that is not a backfill but the truth about
+those rows: until this version the simulation had exactly one ball, so every run that was ever stored *was* a
+one-ball run. This is the one place where a new column may honestly claim a value for old rows, unlike `country`
+(version 3), which was genuinely unknown and stayed NULL. The consequence that matters is that **nothing
+disappears**: after the upgrade the one-ball board is the whole leaderboard as it was, in the same order, and a
+client that never asks for a board still gets exactly that board. The older `(country, score DESC, created_at)`
+index is kept, because it still answers "this player's country" and any country query that names no board, and
+`(score DESC, created_at)` is kept because it is the only index that orders the whole table.
 
 ### 4.4 Anonymous player identity
 The game is fully playable with **no account and no sign-in prompt**, ever. A player identity is invisible
@@ -511,10 +680,44 @@ and the `exp` check plus the replay ledger already bound what a captured token c
 provider API calls after sign-in — the identity token is used once to establish who the player is, and the
 player's own credential (§4.4) carries every later request.
 
-### 4.6 National leaderboard
-A global top 100 is unreachable for an ordinary player, so it stops being a goal after the first look. A national
-board is winnable, which is the only reason to show a ranking at all. It is therefore a **filter over the same
-rows**, not a second board: nothing is stored twice and nothing is re-ranked.
+### 4.6 Boards and the national leaderboard
+Two filters over the same `scores` rows, for two different reasons. Nothing is stored twice and nothing is
+re-ranked; a board is always a slice.
+
+**The board (ball count).** A two-ball game is a different game: two balls to keep alive, two paddle hits per
+rally, and a run that both scores faster per second and ends sooner. Ranking the two together would make the
+one-ball board — the classic one, and the only one that existed until now — read as if it had been overtaken by
+runs that were not playing the same game. So every stored run carries the ball count it was played with, and
+**every query names a board**. There is deliberately no combined board and no way to ask for one.
+
+- The ball count is **taken from the replay**, never from a request: it is `replay.cfg.n`, the config the server
+  re-simulated. There is no `balls` field on `POST /api/scores`, so a run cannot be filed on a board it was not
+  played on. The `201` echoes `balls` so a client can confirm which board its rank is measured against.
+- `GET /api/leaderboard?balls=1|2` and `GET /api/leaderboard/rank?…&balls=1|2` name the board. It **composes**
+  with `period` and `country`, so `?period=week&country=PL&balls=2` is "this week in Poland, two balls", and each
+  board is numbered 1..N of its own.
+- **A request naming no board gets the one-ball board.** Not the two mixed: that board does not exist. One is also
+  the default of `GameConfig.ballCount`, so a request that says nothing gets the board matching the game a client
+  that says nothing plays — and since every row stored before ball counts existed is a one-ball run, a client that
+  has never heard of boards asks the question it always asked and gets exactly the board it always got, whole. An
+  empty parameter (`?balls=`) is the same as an absent one; a value outside 1..2 is `400 invalid_balls` rather than
+  quietly substituted, for the same reason an unusable `country` is refused on a query.
+- **Rows written before this existed are one-ball rows**, and the column says so (`NOT NULL DEFAULT 1`, §4.3).
+  Those runs were played with one ball because there was no other game, so this is a fact rather than a guess, and
+  it is why the upgrade cannot hide anything: the classic board keeps every row it had.
+- A player's standing is per board. `GET /api/players/me` reports `boards`, one entry per board the player has
+  actually played, each with its own `games`, `bestScore`, `rank`, `countryBestScore` and `countryRank`; a player
+  who has submitted nothing gets `[]` rather than empty boards. The **top-level** `bestScore`, `rank`,
+  `countryBestScore` and `countryRank` stay the one-ball board, which is what they always described, so a client
+  that knows nothing about boards keeps reading a true number instead of one averaged over two different games.
+  `games` is every run on either board, because a count is a count and does not belong to a ranking.
+- Boards are a **leaderboard** concept and nothing else. There is one wallet and one daily Spark allowance per
+  player across both (§4.8), one submission rate limit, and one replay ledger — so a second board is not a second
+  allowance to earn or to flood from.
+
+**The national board.** A global top 100 is unreachable for an ordinary player, so it stops being a goal after the
+first look. A national board is winnable, which is the only reason to show a ranking at all. It is therefore a
+**filter over the same rows**, not a second board: nothing is stored twice and nothing is re-ranked.
 
 - `POST /api/scores` may carry `"country":"PL"` — an ISO 3166-1 alpha-2 code the client derives from the **device
   locale**. Case and surrounding whitespace are forgiven (`pl`, ` PL `); a whole locale tag (`pl_PL`, `en-GB`) is
@@ -525,17 +728,19 @@ rows**, not a second board: nothing is stored twice and nothing is re-ranked.
   the run is stored without a country**, never refused: a stale device locale must not cost somebody a verified
   score. A `201` therefore carries `country` and `countryRank` exactly when the hint was accepted, which is also
   how a client notices it was sending the wrong thing.
-- `GET /api/leaderboard?country=PL` restricts the board to one country and **composes with `period`**, so
-  `?period=week&country=PL` is "this week in Poland". `rank` is the position within the returned board, 1..N: the
-  point is that someone who is 4 000th in the world can be 12th at home. `GET /api/leaderboard/rank` takes the
-  same parameter. On these two, an unusable code is `400 {"ok":false,"error":"invalid_country"}` rather than
+- `GET /api/leaderboard?country=PL` restricts the board to one country and **composes with `period` and
+  `balls`**, so `?period=week&country=PL&balls=2` is "this week in Poland, two balls". `rank` is the position
+  within the returned board, 1..N: the point is that someone who is 4 000th in the world can be 12th at home.
+  `GET /api/leaderboard/rank` takes the same parameters. On these two, an unusable code is `400 {"ok":false,"error":"invalid_country"}` rather than
   ignored: answering a request for one country's board with the whole world's would be a wrong answer, not a
   lenient one. An absent or empty parameter is the global board.
 - A leaderboard entry carries `"country"` only when its run had one; absent means unknown, which is what every row
   stored before this existed is. Those rows stay on the global board and appear on no national one.
 - **A player's country** is the code of their most recent run that carried one — the same rule the display name
-  follows (§4.4). A run without a country does not clear it. `countryBestScore` is the player's best run *that
-  counts for that country*, not their best run overall: a player who played in one country and then moved would
+  follows (§4.4) — and it is one fact about the person, not one per board: somebody who plays both games plays
+  them in the same place. The national *standing* is per board, so each `boards` entry carries its own
+  `countryBestScore` and `countryRank`. `countryBestScore` is the player's best run *that counts for that country*
+  on that board, not their best run overall: a player who played in one country and then moved would
   otherwise be given a national rank their rows do not support, and the number next to their name would not match
   the board they are on. `countryRank` uses the same tie rule as the global rank (`1 +` strictly better rows).
 
@@ -573,6 +778,19 @@ The currency is **Sparks** (PL *Iskry*, declined by `Strings.sparks`). It is ear
   carries a Spark amount and nothing in `tokens.dart` takes one as input. Every award is a row in `token_awards`
   keyed by a digest of the run, so a recorded game cannot be submitted for Sparks twice and a leaked replay is
   worth nothing to whoever leaked it. A row is written even when the award is 0.
+- **The rate is the same on both boards** (§4.6), deliberately. A Spark is a Spark, so the catalogue's prices mean
+  the same thing whichever game paid for them; a per-mode rate would have to be explained in the UI as "two-ball
+  runs pay less", which a player experiences as a con. What bounds earning is not the rate but the two caps, and
+  they are per *run* and per *player-day*, not per second: four capped runs a day is four capped runs whatever the
+  ball count. **One wallet and one daily allowance cover both boards** — a player who has spent the day's 200 on
+  one-ball runs earns nothing more by switching game — and the replay ledger is shared, so neither is a second
+  board a second allowance.
+- The run digest **includes the ball count**, because the same seed and the same inputs played with one ball and
+  with two are two different games with two different scores; sharing a ledger row would tell the second one
+  submitted that it had already been paid. It is written so that a **one-ball digest is byte-identical to what the
+  previous build produced**: `token_awards` is keyed by that digest, so re-deriving it differently would orphan
+  every row already in the ledger and every run ever submitted could then be submitted and paid again. Two-ball
+  runs have no history to preserve and get their own namespace.
 - **The catalogue** (`catalogue.dart`) is a table of ids, kinds and prices in Sparks, served from
   `GET /api/shop/catalogue` so no build of the client hardcodes a price. Three kinds — `theme`, `ball`, `paddle` —
   are slots: exactly one item of each is worn. Free items (`theme.neon`, `theme.classic`, `ball.orb`,
@@ -947,4 +1165,10 @@ telefonu / Podążaj za palcem", "Kalibruj").
   random port, connects two WebSocket clients, plays until `over` (using scripted inputs that let the ball escape),
   and asserts the message sequence. The leaderboard path has a test that records a solo game via the core,
   submits it and gets `201`, then tampers the score and gets `400 replay_mismatch`.
+- Server: the board dimension of §4.6 has its own test (`server/test/board_test.dart`) — which board a run is filed
+  on, the default board, the three filters composing, and the per-board standing; so does the duel ball count of §3
+  (`duel_ball_count_test.dart`) and the replay format of §2.5 (`replay_format_test.dart`, including that a replay
+  from an older build is refused *before* anything is simulated). Every schema version has a migration test that
+  starts from a file written by the previous schema and proves no row is lost (`migration_test.dart`).
+  `server/tool/e2e_smoke.dart` checks the same paths cross-process against a running server.
 - No TODOs left for required behavior. No placeholder screens.

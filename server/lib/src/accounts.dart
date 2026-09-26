@@ -26,6 +26,7 @@ import 'package:crypto/crypto.dart';
 import 'config.dart';
 import 'db.dart';
 import 'id_token.dart';
+import 'leaderboard.dart';
 import 'logging.dart';
 import 'players.dart';
 import 'score_store.dart';
@@ -203,7 +204,18 @@ class AccountService {
     }
 
     final playerId = result.playerId!;
-    final stats = await store.playerScores(playerId);
+    // The same per-board standing `GET /api/players/me` reports (SPEC §4.6), so
+    // the two answers about one player cannot disagree: the top-level numbers
+    // are the one-ball board and `games` is every run on either board.
+    final boards = await store.playerBoards(playerId);
+    final classic = boards.firstWhere(
+      (b) => b.balls == defaultBallCount,
+      orElse: () => const PlayerStats(games: 0),
+    );
+    var games = 0;
+    for (final board in boards) {
+      games += board.games;
+    }
     log.info(
       'account ${result.kind!.name} provider=${token.provider} '
       'player=$playerId'
@@ -221,16 +233,28 @@ class AccountService {
       // Runs carried over from the absorbed player; 0 unless `outcome` is
       // `merged`, so a client can say "your 12 runs are now on this account".
       'movedScores': result.movedScores,
-      'bestScore': stats.bestScore,
-      'rank': stats.rank,
-      'games': stats.games,
+      'bestScore': classic.bestScore,
+      'rank': classic.rank,
+      'games': games,
       // The same national standing `GET /api/players/me` reports (SPEC §4.6).
       // Worth having here because a merge changes it: the runs of both halves
       // are now one player's, so the country rank the phone was showing a moment
       // ago is stale.
-      'country': stats.country,
-      'countryBestScore': stats.countryBestScore,
-      'countryRank': stats.countryRank,
+      'country': classic.country,
+      'countryBestScore': classic.countryBestScore,
+      'countryRank': classic.countryRank,
+      // One entry per board the merged player has runs on, for the same reason.
+      'boards': [
+        for (final board in boards)
+          {
+            'balls': board.balls,
+            'games': board.games,
+            'bestScore': board.bestScore,
+            'rank': board.rank,
+            'countryBestScore': board.countryBestScore,
+            'countryRank': board.countryRank,
+          },
+      ],
     });
   }
 

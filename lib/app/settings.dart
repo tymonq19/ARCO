@@ -1,5 +1,6 @@
 import 'dart:math' as math;
 
+import 'package:arco_core/arco_core.dart';
 import 'package:flutter/foundation.dart';
 
 import '../services/storage.dart';
@@ -64,7 +65,16 @@ class Settings extends ChangeNotifier {
     if (storedOnboarded == null) {
       _storage.setBool(_kOnboarded, _onboarded);
     }
+    // One ball unless the player has asked for two; a stored value from a build
+    // that did not have the toggle, or one outside the range the simulation
+    // accepts, resolves to the classic game rather than refusing to launch.
+    _ballCount = (_storage.getInt(_kBallCount) ?? minBallCount).clamp(
+      minBallCount,
+      maxBallCount,
+    );
     _bestScore = _storage.getInt(_kBestScore) ?? 0;
+    _bestScoreTwoBall = _storage.getInt(_kBestScoreTwoBall) ?? 0;
+    _playedTwoBall = _storage.getBool(_kPlayedTwoBall) ?? false;
   }
 
   static const String _kLanguage = 'language';
@@ -79,6 +89,22 @@ class Settings extends ChangeNotifier {
   static const String _kPlayerName = 'playerName';
   static const String _kOnboarded = 'onboarded';
   static const String _kBestScore = 'bestScore';
+
+  /// Balls the next game is played with (SPEC §2.3). Not a look and not a
+  /// convenience: it goes into `GameConfig`, so it is part of the replay the
+  /// server re-simulates, and it decides which leaderboard a run lands on.
+  static const String _kBallCount = 'ballCount';
+
+  /// The two-ball personal best. A separate key, because the two counts are two
+  /// games and two boards; `bestScore` keeps meaning the classic one, so a
+  /// player upgrading from a build without the toggle keeps their record.
+  static const String _kBestScoreTwoBall = 'bestScore2';
+
+  /// Whether a two-ball game has ever been finished on this device. Recorded
+  /// rather than inferred from the best score, because a two-ball game that
+  /// ended on nought is still a game that was played — and it is what keeps the
+  /// leaderboard from opening a newcomer on a board they have no runs on.
+  static const String _kPlayedTwoBall = 'played2';
 
   static const double minTiltSensitivity = 0.5;
   static const double maxTiltSensitivity = 2.5;
@@ -96,7 +122,10 @@ class Settings extends ChangeNotifier {
   late GameTheme _theme;
   late String _playerName;
   late bool _onboarded;
+  late int _ballCount;
   late int _bestScore;
+  late int _bestScoreTwoBall;
+  late bool _playedTwoBall;
 
   AppLanguage get language => _language;
   set language(AppLanguage v) {
@@ -218,6 +247,23 @@ class Settings extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Balls the next game is played with, [minBallCount]..[maxBallCount]
+  /// (SPEC §2.3).
+  ///
+  /// It reaches [GameConfig] and therefore the replay, so it is remembered
+  /// between launches like a control scheme is — but unlike one it changes the
+  /// game, which is why it is offered where a game is about to start and not in
+  /// Settings.
+  int get ballCount => _ballCount;
+  set ballCount(int v) {
+    final c = v.clamp(minBallCount, maxBallCount);
+    if (c == _ballCount) return;
+    _ballCount = c;
+    _storage.setInt(_kBallCount, c);
+    notifyListeners();
+  }
+
+  /// The personal best on the classic, one-ball board.
   int get bestScore => _bestScore;
   set bestScore(int v) {
     if (v == _bestScore) return;
@@ -226,11 +272,35 @@ class Settings extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// Records [score] as the personal best when it beats the current one.
-  /// Returns true when a new best was set.
-  bool recordScore(int score) {
-    if (score <= _bestScore) return false;
-    bestScore = score;
+  /// The personal best for [balls] balls — one record per board, because a
+  /// two-ball run is not competing with a one-ball one.
+  int bestScoreFor(int balls) => balls >= 2 ? _bestScoreTwoBall : _bestScore;
+
+  /// True once a game of [balls] balls has been finished on this device. One
+  /// ball is always true: it is the game every player has played.
+  bool hasPlayed(int balls) => balls >= 2 ? _playedTwoBall : true;
+
+  /// Records that a game of [balls] balls was played to the end, whatever it
+  /// scored. Called by the solo controller on game over.
+  void notePlayed(int balls) {
+    if (balls < 2 || _playedTwoBall) return;
+    _playedTwoBall = true;
+    _storage.setBool(_kPlayedTwoBall, true);
+    notifyListeners();
+  }
+
+  /// Records [score] as the personal best for [balls] balls when it beats the
+  /// current one. Returns true when a new best was set.
+  bool recordScore(int score, {int balls = minBallCount}) {
+    if (balls < 2) {
+      if (score <= _bestScore) return false;
+      bestScore = score;
+      return true;
+    }
+    if (score <= _bestScoreTwoBall) return false;
+    _bestScoreTwoBall = score;
+    _storage.setInt(_kBestScoreTwoBall, score);
+    notifyListeners();
     return true;
   }
 

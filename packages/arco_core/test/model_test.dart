@@ -19,10 +19,10 @@ void main() {
       expect(s.players[0].lives, startLives);
       expect(s.players[0].score, 0);
       expect(s.players[0].combo, 0);
-      expect(s.ball.active, isFalse);
-      expect(s.ball.x, 0);
-      expect(s.ball.y, 0);
-      expect(s.ball.owner, -1);
+      expect(s.balls[0].active, isFalse);
+      expect(s.balls[0].x, 0);
+      expect(s.balls[0].y, 0);
+      expect(s.balls[0].owner, -1);
       expect(s.walls, isEmpty);
       expect(s.pickups, isEmpty);
       expect(s.nextId, 1);
@@ -40,9 +40,9 @@ void main() {
       expect(s.players.length, 2);
       // The first serve is aimed at a randomly drawn player, carried in
       // `ball.owner` until the serve consumes it.
-      expect(s.ball.owner, inRange(0, 1));
-      expect(s.ball.vx, 0);
-      expect(s.ball.vy, 0);
+      expect(s.balls[0].owner, inRange(0, 1));
+      expect(s.balls[0].vx, 0);
+      expect(s.balls[0].vy, 0);
       expect(s.players[0].paddle.angle, bottomCenterAngle);
       expect(s.players[1].paddle.angle, topCenterAngle);
       expect(s.config.playerCount, 2);
@@ -75,16 +75,18 @@ void main() {
       expect(c.hash(), isNot(h));
       final c2 = s.clone()..players[0].score += 1;
       expect(c2.hash(), isNot(h));
-      final c3 = s.clone()..ball.x += 1e-5;
+      final c3 = s.clone()..balls[0].x += 1e-5;
       expect(c3.hash(), isNot(h));
-      final c4 = s.clone()..ball.x += 1e-8; // below quantization
+      final c4 = s.clone()..balls[0].x += 1e-8; // below quantization
       expect(c4.hash(), h);
       final c5 = s.clone()..winner = 0;
       expect(c5.hash(), isNot(h));
       final c6 = s.clone()..rng.nextUint32();
       expect(c6.hash(), isNot(h));
       final c7 = s.clone()
-        ..walls.add(Wall(id: 1, x1: 0, y1: 0, x2: 0.3, y2: 0, ttl: 600));
+        ..walls.add(
+          Wall.segment(id: 1, x1: 0, y1: 0, x2: 0.3, y2: 0, ttl: 600),
+        );
       expect(c7.hash(), isNot(h));
       final c8 = s.clone()
         ..pickups.add(Pickup(id: 1, type: PickupType.star, x: 0.1, y: 0.1));
@@ -95,9 +97,9 @@ void main() {
 
     test('handles negative values deterministically', () {
       final s = playingState();
-      s.ball.x = -0.5;
-      s.ball.vx = -0.25;
-      s.ball.owner = -1;
+      s.balls[0].x = -0.5;
+      s.balls[0].vx = -0.25;
+      s.balls[0].owner = -1;
       s.winner = -1;
       expect(s.hash(), s.clone().hash());
     });
@@ -106,20 +108,20 @@ void main() {
   group('GameState.clone', () {
     test('is a deep copy', () {
       final s = playingState();
-      s.walls.add(Wall(id: 1, x1: 0, y1: 0, x2: 0.3, y2: 0, ttl: 600));
+      s.walls.add(Wall.segment(id: 1, x1: 0, y1: 0, x2: 0.3, y2: 0, ttl: 600));
       s.pickups.add(Pickup(id: 2, type: PickupType.heart, x: 0.1, y: 0.1));
       s.events.add(const GameEvent(GameEventType.serve));
       final c = s.clone();
       expect(c.hash(), s.hash());
       expect(c.events.length, 1);
       c.players[0].paddle.angle += 1;
-      c.ball.x += 1;
+      c.balls[0].x += 1;
       c.walls[0].age += 5;
       c.pickups[0].ttl -= 5;
       c.rng.nextUint32();
       c.walls.removeAt(0);
       expect(s.players[0].paddle.angle, bottomCenterAngle);
-      expect(s.ball.x, 0);
+      expect(s.balls[0].x, 0);
       expect(s.walls.length, 1);
       expect(s.walls[0].age, 0);
       expect(s.pickups[0].ttl, pickupLifetime);
@@ -154,8 +156,10 @@ void main() {
       expect(j['win'], -1);
       // While serving, a duel state keeps the receiving player in `owner`
       // (see Ball.owner); seed 3 draws player 1 for the first serve.
-      expect(s.ball.owner, 1);
-      expect(j['b'], [0.0, 0.0, 0.0, 0.0, baseSpeed, 1, 0]);
+      expect(s.balls[0].owner, 1);
+      expect(j['b'], [
+        [0.0, 0.0, 0.0, 0.0, baseSpeed, 1, 0],
+      ]);
       expect(j['p'], [
         [bottomCenterAngle, 3, 0, 0],
         [topCenterAngle, 3, 0, 0],
@@ -164,7 +168,7 @@ void main() {
       expect(j['k'], isEmpty);
       expect(j['nid'], 1);
       expect(j['rng'], s.rng.toJson());
-      expect(j['cfg'], {'m': GameMode.duel.index, 's': 3});
+      expect(j['cfg'], {'m': GameMode.duel.index, 's': 3, 'n': 1});
     });
 
     test('round-trip through jsonEncode/jsonDecode preserves the hash', () {
@@ -198,12 +202,14 @@ void main() {
         const GameConfig(mode: GameMode.solo, seed: 1),
       );
       final j = s.toJson();
-      j['b'] = [0, 0, 0, 0, 1, -1, 0];
+      j['b'] = [
+        [0, 0, 0, 0, 1, -1, 0],
+      ];
       j['p'] = [
         [4, 3, 0, 0],
       ];
       j['w'] = [
-        [1, 0, 0, 1, 0, 0, 600],
+        [1, WallShape.straight.index, 0, 600, 0, 0, 1, 0],
       ];
       j['k'] = [
         [2, 1, 0, 0, 480],
@@ -211,9 +217,9 @@ void main() {
       final back = GameState.fromJson(
         jsonDecode(jsonEncode(j)) as Map<String, dynamic>,
       );
-      expect(back.ball.speed, 1.0);
+      expect(back.balls[0].speed, 1.0);
       expect(back.players[0].paddle.angle, 4.0);
-      expect(back.walls[0].x2, 1.0);
+      expect(back.walls[0].pointX(1), 1.0);
       expect(back.pickups[0].type, PickupType.star);
       expect(back.hash(), back.clone().hash());
     });
@@ -243,23 +249,40 @@ void main() {
     });
 
     test('Wall.solid and Wall.alpha follow the fade windows', () {
-      final w = Wall(id: 1, x1: 0, y1: 0, x2: 0.3, y2: 0, ttl: 600);
+      final w = Wall.segment(id: 1, x1: 0, y1: 0, x2: 0.3, y2: 0, ttl: 600);
       expect(w.solid, isFalse);
       expect(w.alpha, 0);
       w.age = wallFadeTicks - 1;
       expect(w.solid, isFalse);
+      expect(w.alpha, closeTo((wallFadeTicks - 1) / wallFadeTicks, 1e-12));
       w.age = wallFadeTicks;
       expect(w.solid, isTrue);
       expect(w.alpha, 1);
       w.age = 600 - wallFadeTicks - 1;
       expect(w.solid, isTrue);
+      expect(w.alpha, 1);
       w.age = 600 - wallFadeTicks;
       expect(w.solid, isFalse);
-      expect(w.alpha, 1);
-      w.age = 599;
+      // The fade-out mirrors the fade-in, so the first transparent tick is also
+      // the first tick that is not fully opaque: what looks solid is solid.
+      expect(w.alpha, closeTo((wallFadeTicks - 1) / wallFadeTicks, 1e-12));
+      w.age = 598;
       expect(w.alpha, closeTo(1 / wallFadeTicks, 1e-12));
+      w.age = 599;
+      expect(w.alpha, 0);
       w.age = 600;
       expect(w.alpha, 0);
+    });
+
+    test('Wall.alpha is 1 exactly while Wall.solid', () {
+      for (final ttl in [wallMinLifetime, 600, wallMaxLifetime]) {
+        final w = Wall.segment(id: 1, x1: 0, y1: 0, x2: 0.3, y2: 0, ttl: ttl);
+        for (var age = 0; age <= ttl; age++) {
+          w.age = age;
+          expect(w.alpha == 1.0, w.solid, reason: 'ttl $ttl age $age');
+          expect(w.alpha, inRange(0, 1));
+        }
+      }
     });
 
     test('GameEvent JSON round-trip', () {

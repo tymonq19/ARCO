@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:arco_core/arco_core.dart';
 import 'package:flutter/foundation.dart';
@@ -89,6 +90,7 @@ class DuelClient extends ChangeNotifier {
   int _serverTick = -1;
   String? _roomCode;
   int _slot = -1;
+  int _roomBallCount = minBallCount;
   List<String?> _names = const [null, null];
   String? _lastError;
   String _playerName = '';
@@ -107,6 +109,17 @@ class DuelClient extends ChangeNotifier {
 
   /// Own player index in the room (0 = creator / bottom, 1 = joiner / top).
   int get slot => _slot;
+
+  /// Balls the current room plays with (SPEC §2.3), 1 until a `room` or `start`
+  /// frame says otherwise.
+  ///
+  /// The count is the creator's choice and travels in the protocol's `n` field
+  /// (SPEC §3): `create` carries the choice up, and `room` and `start` carry the
+  /// room's answer back down to **both** clients, which is how the joiner is told
+  /// before the first serve. A server that sends no `n` — anything older than
+  /// this protocol version — means the one-ball game, so an old room is played
+  /// correctly rather than refused.
+  int get roomBallCount => _roomBallCount;
   List<String?> get names => _names;
 
   /// Last error code received (`duel.error.*` key), cleared on success.
@@ -170,9 +183,18 @@ class DuelClient extends ChangeNotifier {
     }
   }
 
-  void createRoom() {
+  /// Asks for a fresh room playing [ballCount] balls (SPEC §2.3, §3).
+  ///
+  /// The count rides on the `create` frame as `n`. `CreateRoomMsg` in the core
+  /// carries no field for it yet, so the frame is built from the message's own
+  /// JSON plus that one key — which is exactly what a JSON protocol is for, and
+  /// is why a server that does not read it still creates a perfectly good
+  /// one-ball room.
+  void createRoom({int ballCount = minBallCount}) {
     _lastError = null;
-    _send(const CreateRoomMsg());
+    final n = ballCount.clamp(minBallCount, maxBallCount);
+    _roomBallCount = n;
+    _sendFrame({...const CreateRoomMsg().toJson(), 'n': n});
   }
 
   void joinRoom(String code) {
@@ -192,6 +214,7 @@ class DuelClient extends ChangeNotifier {
     _send(const LeaveMsg());
     _roomCode = null;
     _slot = -1;
+    _roomBallCount = minBallCount;
     _names = const [null, null];
     _serverTick = -1;
     _setState(DuelClientState.lobby);
@@ -213,11 +236,13 @@ class DuelClient extends ChangeNotifier {
 
   // ----------------------------------------------------------------- internals
 
-  void _send(ClientMsg msg) {
+  void _send(ClientMsg msg) => _sendFrame(msg.toJson());
+
+  void _sendFrame(Map<String, dynamic> frame) {
     final t = _transport;
     if (t == null) return;
     try {
-      t.send(encodeMsg(msg));
+      t.send(jsonEncode(frame));
     } on Object catch (e) {
       debugPrint('DuelClient: send failed: $e');
     }
@@ -228,9 +253,21 @@ class DuelClient extends ChangeNotifier {
     _send(PingMsg(clientMs: DateTime.now().millisecondsSinceEpoch));
   }
 
+  /// The `n` (ball count) of a server frame, or null when it carries none.
+  ///
+  /// Read off the raw frame rather than the parsed message because the core's
+  /// `RoomMsg` / `StartMsg` have no field for it yet (SPEC §3). Anything that is
+  /// not a usable count is treated as absent.
+  static int? _frameBallCount(Map<String, dynamic> raw) {
+    final n = raw['n'];
+    if (n is! int || n < minBallCount || n > maxBallCount) return null;
+    return n;
+  }
+
   void _onFrame(dynamic frame) {
-    final msg = ServerMsg.decode(frame);
-    if (msg == null) {
+    final raw = decodeFrame(frame);
+    final msg = raw == null ? null : ServerMsg.parse(raw);
+    if (msg == null || raw == null) {
       debugPrint('DuelClient: unparseable frame');
       return;
     }
@@ -244,10 +281,19 @@ class DuelClient extends ChangeNotifier {
         _roomCode = msg.code;
         _slot = msg.slot;
         _names = msg.names;
+        // The room's own count, which is how the joiner learns what the creator
+        // picked while they are both still in the waiting room. Absent leaves the
+        // creator's own choice standing (they are the one who asked for it) and
+        // the joiner on the default.
+        _roomBallCount = _frameBallCount(raw) ?? _roomBallCount;
         _lastError = null;
         _setState(DuelClientState.waiting);
       case StartMsg():
         _names = msg.names;
+        // `start` is the frame the local game is built from, so it is the last
+        // word: a `start` with no count comes from a server that does not know
+        // about ball counts, and that server is simulating one ball.
+        _roomBallCount = _frameBallCount(raw) ?? minBallCount;
         _lastError = null;
         _setState(DuelClientState.countdown);
       case SnapMsg():
@@ -313,6 +359,7 @@ class DuelClient extends ChangeNotifier {
     _transport = null;
     _roomCode = null;
     _slot = -1;
+    _roomBallCount = minBallCount;
     _names = const [null, null];
     _pingMs = null;
     _serverTick = -1;

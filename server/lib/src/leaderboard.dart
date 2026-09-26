@@ -17,6 +17,43 @@ import 'name_filter.dart';
 import 'players.dart';
 import 'score_store.dart';
 
+/// The board a request gets when it names none (SPEC §4.6): the one-ball game.
+///
+/// Not "everything mixed", which is the shape this server deliberately does not
+/// serve. Two balls score at a different rate, so a board holding both would
+/// rank runs that were not playing the same game and would make the one-ball
+/// board — the classic one, and the only one that existed until now — read as if
+/// it had been overtaken. One is also the default of `GameConfig.ballCount`, so
+/// a request that says nothing gets the board matching the game a client that
+/// says nothing plays; and since every row stored before ball counts existed was
+/// a one-ball run, an old client asking the old question still gets exactly the
+/// board it used to get, whole.
+const int defaultBallCount = minBallCount;
+
+/// A `balls` parameter naming a board this server cannot serve (SPEC §4.6).
+///
+/// Refused rather than ignored, for the same reason an unusable `country` is on
+/// a query: answering "the two-ball board" with some other board is a wrong
+/// answer, not a lenient one. On a *submission* the ball count is not a
+/// parameter at all — it comes from the replay the server verified — so this
+/// code never appears there.
+const String invalidBallCountError = 'invalid_balls';
+
+/// Parses the `balls` query parameter: the board, or null when it names none
+/// this server can serve.
+///
+/// Absent or empty is [defaultBallCount], never an error: `GET /api/leaderboard`
+/// has to keep answering the question it answered before boards existed.
+int? parseBallCount(String? raw) {
+  final text = raw?.trim();
+  if (text == null || text.isEmpty) return defaultBallCount;
+  final value = int.tryParse(text);
+  if (value == null || value < minBallCount || value > maxBallCount) {
+    return null;
+  }
+  return value;
+}
+
 /// Outcome of a score submission: an HTTP status plus a JSON body.
 class SubmitResult {
   const SubmitResult._(this.status, this.body);
@@ -28,6 +65,7 @@ class SubmitResult {
     required String id,
     required int score,
     required int rank,
+    required int balls,
     String? playerId,
     String? country,
     int? countryRank,
@@ -38,6 +76,11 @@ class SubmitResult {
     'id': id,
     'score': score,
     'rank': rank,
+    // Which board the run was filed on and the rank is measured against
+    // (SPEC §4.6). It is not echoed from the request — there is no such
+    // parameter — but taken from the replay the server verified, so a client
+    // that sent a two-ball replay learns that this server agreed it was one.
+    'balls': balls,
     // Echoed back so a client can confirm the run was attached to it before
     // the row shows up on the leaderboard. Absent for anonymous submissions.
     'playerId': ?playerId,
@@ -120,6 +163,7 @@ class CheckedSubmission {
     this.seed = 0,
     this.country,
     this.replayKey = '',
+    this.balls = defaultBallCount,
   });
 
   /// [error] is the SPEC §4 error code; [name] and [claimedScore] are filled in
@@ -144,6 +188,7 @@ class CheckedSubmission {
     required int hash,
     required int seed,
     required String replayKey,
+    required int balls,
     String? country,
   }) : this._(
          name: name,
@@ -153,6 +198,7 @@ class CheckedSubmission {
          seed: seed,
          country: country,
          replayKey: replayKey,
+         balls: balls,
        );
 
   /// Error code, or null when the submission may be stored.
@@ -179,6 +225,12 @@ class CheckedSubmission {
   /// [replayFingerprint].
   final String replayKey;
 
+  /// Balls the verified run was played with, i.e. the board it is filed on
+  /// (SPEC §4.6). It comes from the replay's own config — the one the server
+  /// re-simulated — so a client cannot file a two-ball run on the one-ball board
+  /// by asking nicely.
+  final int balls;
+
   bool get ok => error == null;
 }
 
@@ -200,9 +252,29 @@ class CheckedSubmission {
 /// The key is global rather than per player, so a replay that leaks is worth
 /// nothing to whoever copies it — the first submission of a run is the only one
 /// that can ever pay.
+///
+/// **The ball count is part of the run** (SPEC §4.6): the same seed and the same
+/// input log played with one ball and with two are two different games with two
+/// different scores, so they must not share a ledger row — the second one to
+/// arrive would be told it had already been paid.
+///
+/// It is written into the canonical string in the one shape that leaves a
+/// one-ball run's digest **byte-identical** to what the previous build produced:
+/// nothing at all for one ball, `n2|` for two. That is not cosmetic. The digest
+/// is the primary key of `token_awards`, so re-deriving it differently would
+/// orphan every row already in that ledger and every run ever submitted could
+/// then be submitted a second time and paid a second time. Two-ball runs have no
+/// history to preserve — they could not be played before this version — so they
+/// get their own namespace and start clean.
 String replayFingerprint(Replay replay) {
-  final canonical = StringBuffer()
-    ..write('arco-run-v1|')
+  final canonical = StringBuffer()..write('arco-run-v1|');
+  if (replay.config.ballCount != defaultBallCount) {
+    canonical
+      ..write('n')
+      ..write(replay.config.ballCount)
+      ..write('|');
+  }
+  canonical
     ..write(replay.config.mode.index)
     ..write('|')
     ..write(replay.config.seed)
@@ -365,10 +437,25 @@ CheckedSubmission checkSubmission(
       seed: replay.config.seed,
       country: country,
       replayKey: replayKey,
+      balls: replay.config.ballCount,
     );
   }
   final result = ReplayVerifier.verify(replay);
   if (!result.ok) {
+    // `bad_config` is the one refusal that is not about the run: the verifier
+    // was handed a ball count this build cannot simulate, so nothing was
+    // simulated at all. Answering `replay_mismatch` would tell the player their
+    // score was rejected, which is not what happened. Unreachable over HTTP —
+    // `GameConfig.fromJson` refuses such a config while decoding — and mapped
+    // anyway, so the meaning cannot drift if that ever changes.
+    if (result.reason == 'bad_config') {
+      return CheckedSubmission.rejected(
+        'invalid_replay',
+        detail: 'bad_config',
+        name: name,
+        claimedScore: replay.claimedScore,
+      );
+    }
     return CheckedSubmission.rejected(
       'replay_mismatch',
       detail: result.reason ?? 'verification failed',
@@ -384,6 +471,7 @@ CheckedSubmission checkSubmission(
     seed: replay.config.seed,
     country: country,
     replayKey: replayKey,
+    balls: replay.config.ballCount,
   );
 }
 
@@ -457,6 +545,7 @@ class LeaderboardService {
         hash: checked.hash,
         playerId: playerId,
         country: checked.country,
+        balls: checked.balls,
       ),
     );
     TokenAward? award;
@@ -478,16 +567,24 @@ class LeaderboardService {
         now: now,
       );
     }
-    final rank = await store.rank(checked.score);
+    // Both ranks are positions on the board this run was actually played on
+    // (SPEC §4.6): counting a two-ball run against one-ball runs would be a
+    // position in a race nobody ran.
+    final rank = await store.rank(checked.score, balls: checked.balls);
     // The point of the national board: this number is reachable, and the client
     // can show it the moment the run is stored instead of making the player go
     // looking for it.
     final countryRank = checked.country == null
         ? null
-        : await store.rank(checked.score, country: checked.country);
+        : await store.rank(
+            checked.score,
+            country: checked.country,
+            balls: checked.balls,
+          );
     log.info(
       'score stored id=$id name="${checked.name}" score=${checked.score} '
-      'ticks=${checked.ticks} rank=$rank player=${playerId ?? '-'} '
+      'ticks=${checked.ticks} balls=${checked.balls} rank=$rank '
+      'player=${playerId ?? '-'} '
       'country=${checked.country ?? '-'}'
       '${award == null ? '' : ' tokens=${award.tokens}'
                 '${award.duplicate ? ' (duplicate run)' : ''}'
@@ -497,6 +594,7 @@ class LeaderboardService {
       id: id,
       score: checked.score,
       rank: rank,
+      balls: checked.balls,
       playerId: playerId,
       country: checked.country,
       countryRank: countryRank,
@@ -505,23 +603,25 @@ class LeaderboardService {
     );
   }
 
-  /// The board for [period], restricted to [country] when one is given.
+  /// The [balls] board for [period], restricted to [country] when one is given.
   ///
-  /// The two filters compose (SPEC §4.6): "this week in Poland" is one query,
-  /// and `rank` is the position **within the returned slice**, so the national
-  /// board is numbered 1..N of its own and not by global position. A player who
-  /// is 4 000th in the world can be 12th at home, which is the only reason to
-  /// show a ranking at all.
+  /// All three filters compose (SPEC §4.6): "this week in Poland, two balls" is
+  /// one query, and `rank` is the position **within the returned slice**, so
+  /// each board is numbered 1..N of its own and not by global position. A player
+  /// who is 4 000th in the world can be 12th at home, which is the only reason
+  /// to show a ranking at all.
   Future<List<LeaderboardEntry>> list({
     LeaderboardPeriod period = LeaderboardPeriod.all,
     int limit = maxLimit,
     String? country,
+    int balls = defaultBallCount,
   }) async {
     final rows = await store.topScores(
       period: period,
       limit: limit.clamp(1, maxLimit),
       now: _clock(),
       country: country,
+      balls: balls,
     );
     return [
       for (var i = 0; i < rows.length; i++)
@@ -541,7 +641,14 @@ class LeaderboardService {
     int score, {
     LeaderboardPeriod period = LeaderboardPeriod.all,
     String? country,
-  }) => store.rank(score, period: period, now: _clock(), country: country);
+    int balls = defaultBallCount,
+  }) => store.rank(
+    score,
+    period: period,
+    now: _clock(),
+    country: country,
+    balls: balls,
+  );
 
   /// 128 random bits as 32 hex characters — the same id shape players use.
   String newId() => randomHexId(_random);

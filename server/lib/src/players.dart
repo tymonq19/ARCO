@@ -233,8 +233,15 @@ class PlayerService {
     return PlayerAuth.ok(stored.player);
   }
 
-  /// Games submitted, best score and global rank for [playerId].
-  Future<PlayerStats> stats(String playerId) => store.playerScores(playerId);
+  /// Games submitted, best score and rank for [playerId] on one board
+  /// (SPEC §4.6); the one-ball board unless another is named.
+  Future<PlayerStats> stats(String playerId, {int balls = 1}) =>
+      store.playerScores(playerId, balls: balls);
+
+  /// One entry per board [playerId] has runs on, in ball-count order
+  /// (SPEC §4.6). Empty for a player who has submitted nothing.
+  Future<List<PlayerStats>> boards(String playerId) =>
+      store.playerBoards(playerId);
 
   /// Deletes [player] and anonymises the runs it owned, returning how many
   /// score rows were anonymised (SPEC §4.5).

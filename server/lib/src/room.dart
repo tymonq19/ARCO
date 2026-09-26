@@ -3,6 +3,7 @@ library;
 
 import 'package:arco_core/arco_core.dart';
 
+import 'duel_ball_count.dart';
 import 'session.dart';
 
 /// How far ahead of the room's own sim tick a client input tick may be before
@@ -15,12 +16,21 @@ const int maxInputTickLead = tickRate;
 enum RoomState { waiting, countdown, playing, over }
 
 class Room {
-  Room(this.code, {required DateTime now})
-    : createdAt = now,
+  Room(this.code, {required DateTime now, this.ballCount = minBallCount})
+    : assert(ballCount >= minBallCount && ballCount <= maxBallCount),
+      createdAt = now,
       lastActivity = now;
 
   final String code;
   final DateTime createdAt;
+
+  /// Balls every game in this room is played with (SPEC §3).
+  ///
+  /// Chosen by the **creator** when the room is made and fixed for the room's
+  /// whole life, rematches included: it is what the joining player was shown
+  /// before they agreed to play, so changing it between games would be changing
+  /// the game underneath them. A new choice is a new room.
+  final int ballCount;
 
   /// Last time a player did something that changed the room (join, game start,
   /// rematch vote, input while a game runs); drives the idle timeout for rooms
@@ -101,9 +111,18 @@ class Room {
   }
 
   /// Sends the current `room` message to every seated player.
+  ///
+  /// It carries [ballCount] (SPEC §3), which is how the joining player learns
+  /// what they joined **before** the countdown starts rather than discovering it
+  /// when two balls appear.
   void broadcastRoomInfo() {
     for (var i = 0; i < slots.length; i++) {
-      slots[i]?.send(RoomMsg(code: code, slot: i, names: names));
+      slots[i]?.sendFrame(
+        encodeWithBallCount(
+          RoomMsg(code: code, slot: i, names: names),
+          ballCount,
+        ),
+      );
     }
   }
 
@@ -122,11 +141,16 @@ class Room {
       rematchVotes[i] = false;
     }
     touch(now);
-    broadcast(
-      StartMsg(
-        seed: seed,
-        countdown: countdownTicks,
-        names: [for (final n in names) n ?? ''],
+    // The ball count rides along so both clients build the same [GameConfig]
+    // before tick 0, not after the first snapshot corrects them (SPEC §3).
+    broadcastFrame(
+      encodeWithBallCount(
+        StartMsg(
+          seed: seed,
+          countdown: countdownTicks,
+          names: [for (final n in names) n ?? ''],
+        ),
+        ballCount,
       ),
     );
   }
@@ -172,7 +196,9 @@ class Room {
       case RoomState.countdown:
         countdownLeft--;
         if (countdownLeft > 0) return;
-        game = GameState.initial(GameConfig(mode: GameMode.duel, seed: seed));
+        game = GameState.initial(
+          GameConfig(mode: GameMode.duel, seed: seed, ballCount: ballCount),
+        );
         state = RoomState.playing;
         _step();
       case RoomState.playing:
@@ -208,8 +234,10 @@ class Room {
   }
 
   /// Encodes [msg] once and sends it to every seated player.
-  void broadcast(ServerMsg msg) {
-    final frame = encodeMsg(msg);
+  void broadcast(ServerMsg msg) => broadcastFrame(encodeMsg(msg));
+
+  /// Sends one already-encoded frame to every seated player.
+  void broadcastFrame(String frame) {
     for (final s in slots) {
       s?.sendFrame(frame);
     }

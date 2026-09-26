@@ -226,13 +226,30 @@ GameState previewState() => _state ??= _buildPreviewState();
 /// a fixed clock, so the spinning star holds still.
 FxState previewFx() => _fx ??= _buildPreviewFx(previewState());
 
+/// `wallCurveSegments + 1` vertices on an arc, the way the simulation builds a
+/// curved wall: centre (-0.19, -0.28), radius 0.26, swept 1.75 rad.
+List<double> _previewArc() {
+  const cx = -0.19;
+  const cy = -0.28;
+  const radius = 0.26;
+  const start = -0.35;
+  const sweep = 1.75;
+  final points = <double>[];
+  for (var i = 0; i <= wallCurveSegments; i++) {
+    final a = start + sweep * i / wallCurveSegments;
+    points.add(cx + radius * math.cos(a));
+    points.add(cy + radius * math.sin(a));
+  }
+  return points;
+}
+
 GameState _buildPreviewState() {
   final state = GameState.initial(
     const GameConfig(mode: GameMode.solo, seed: 7),
   );
   state.phase = Phase.playing;
   state.serveTimer = 0;
-  state.ball
+  state.balls[0]
     ..active = true
     ..x = -0.10
     ..y = 0.22
@@ -242,8 +259,18 @@ GameState _buildPreviewState() {
     ..owner = 0;
   // Lower right, so the paddle reads as "mine" without covering the wall.
   state.players[0].paddle.angle = 5.15;
+  // A curved wall rather than a straight one (SPEC §2.3): the shaped walls are
+  // the thing each theme now has to draw well, so the card that sells a theme
+  // shows one. Eight chords on an arc of about 100°, which is what the
+  // simulation spawns.
   state.walls.add(
-    Wall(id: 1, x1: -0.44, y1: -0.16, x2: 0.06, y2: -0.40, ttl: 600, age: 120),
+    Wall(
+      id: 1,
+      shape: WallShape.curved,
+      points: _previewArc(),
+      ttl: 600,
+      age: 120,
+    ),
   );
   state.pickups.add(
     Pickup(id: 2, type: PickupType.star, x: 0.34, y: 0.30, ttl: 400),
@@ -256,7 +283,7 @@ FxState _buildPreviewFx(GameState state) {
   // A clock value that leaves the star at a pleasing angle; nothing advances it
   // afterwards, so the illustration is completely static.
   fx.time = 0.62;
-  final ball = state.ball;
+  final ball = state.balls[0];
   final x = ball.x;
   final y = ball.y;
   // Walk the ball back along its velocity and feed the trail forwards, which is

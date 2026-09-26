@@ -343,15 +343,36 @@ class ApiHandler {
     return (country: code, refusal: null);
   }
 
+  /// The `balls` query parameter of SPEC §4.6: the board to answer about, or the
+  /// `400` to answer with. Absent or empty is [defaultBallCount], the one-ball
+  /// board — never the two boards mixed together, which this server does not
+  /// serve at all.
+  ({int balls, Response? refusal}) _ballFilter(Request request) {
+    final balls = parseBallCount(request.url.queryParameters['balls']);
+    if (balls == null) {
+      return (
+        balls: defaultBallCount,
+        refusal: errorResponse(
+          400,
+          invalidBallCountError,
+          detail: 'balls must be between $minBallCount and $maxBallCount',
+        ),
+      );
+    }
+    return (balls: balls, refusal: null);
+  }
+
   Future<Response> _leaderboard(Request request) async {
     final period = LeaderboardPeriod.parse(
       request.url.queryParameters['period'],
     );
     if (period == null) return errorResponse(400, 'invalid_period');
-    // Composes with the period rather than replacing it: "this week in Poland"
-    // is `?period=week&country=PL` (SPEC §4.6).
+    // All three filters compose rather than replacing one another: "this week in
+    // Poland, two balls" is `?period=week&country=PL&balls=2` (SPEC §4.6).
     final (country: country, refusal: refusal) = _countryFilter(request);
     if (refusal != null) return refusal;
+    final (balls: balls, refusal: ballRefusal) = _ballFilter(request);
+    if (ballRefusal != null) return ballRefusal;
     final rawLimit = request.url.queryParameters['limit'];
     final limit = (int.tryParse(rawLimit ?? '') ?? LeaderboardService.maxLimit)
         .clamp(1, LeaderboardService.maxLimit);
@@ -359,8 +380,13 @@ class ApiHandler {
       period: period,
       limit: limit,
       country: country,
+      balls: balls,
     );
     return jsonResponse(200, {
+      // Named once in the envelope rather than repeated on every row: every
+      // entry is on this board, and a client that omitted the parameter learns
+      // from the answer which board it got.
+      'balls': balls,
       'entries': [for (final e in entries) e.toJson()],
     });
   }
@@ -374,12 +400,15 @@ class ApiHandler {
     if (period == null) return errorResponse(400, 'invalid_period');
     final (country: country, refusal: refusal) = _countryFilter(request);
     if (refusal != null) return refusal;
+    final (balls: balls, refusal: ballRefusal) = _ballFilter(request);
+    if (ballRefusal != null) return ballRefusal;
     final rank = await leaderboard.rank(
       score,
       period: period,
       country: country,
+      balls: balls,
     );
-    return jsonResponse(200, {'rank': rank});
+    return jsonResponse(200, {'rank': rank, 'balls': balls});
   }
 
   Future<Response> _submitScore(Request request) async {
@@ -514,20 +543,50 @@ class ApiHandler {
   Future<Response> _playerMe(Request request) async {
     final (player: player, refusal: refusal) = await _requirePlayer(request);
     if (refusal != null) return refusal;
-    final stats = await players.stats(player!.id);
+    // One hop for every board the player has runs on (SPEC §4.6). The
+    // top-level numbers stay the one-ball board, which is the board they always
+    // described — every run stored before ball counts existed was a one-ball run
+    // — so a client that knows nothing about boards keeps reading a true number
+    // instead of one averaged over two different games.
+    final boards = await players.boards(player!.id);
+    final classic = boards.firstWhere(
+      (b) => b.balls == defaultBallCount,
+      orElse: () => const PlayerStats(games: 0),
+    );
+    var games = 0;
+    for (final b in boards) {
+      games += b.games;
+    }
     return jsonResponse(200, {
       'ok': true,
       'id': player.id,
       'name': player.name,
-      'bestScore': stats.bestScore,
-      'rank': stats.rank,
-      'games': stats.games,
+      'bestScore': classic.bestScore,
+      'rank': classic.rank,
+      // Every run the player has submitted, on either board: a count is a count
+      // and does not belong to a ranking.
+      'games': games,
       // The national standing (SPEC §4.6). The country is the one the player's
       // newest run carried, the same rule the display name follows; all three
       // are explicitly null when there is no such run, like `bestScore`.
-      'country': stats.country,
-      'countryBestScore': stats.countryBestScore,
-      'countryRank': stats.countryRank,
+      'country': classic.country,
+      'countryBestScore': classic.countryBestScore,
+      'countryRank': classic.countryRank,
+      // The same numbers per board, one entry per board the player has actually
+      // played — so a two-ball best and its rank can be shown without the client
+      // having to guess which board `bestScore` came from. A player who has
+      // submitted nothing gets `[]` rather than two empty boards.
+      'boards': [
+        for (final b in boards)
+          {
+            'balls': b.balls,
+            'games': b.games,
+            'bestScore': b.bestScore,
+            'rank': b.rank,
+            'countryBestScore': b.countryBestScore,
+            'countryRank': b.countryRank,
+          },
+      ],
       'createdAt': player.createdAt,
       // The linked account, so a client can show "signed in with Apple" and
       // offer sign-out. Absent while the player is anonymous.

@@ -331,6 +331,17 @@ void main() {
           'country': null,
           'countryBestScore': null,
           'countryRank': null,
+          // One board, because one game was played on one board (SPEC §4.6).
+          'boards': [
+            {
+              'balls': 1,
+              'games': 1,
+              'bestScore': replay.claimedScore,
+              'rank': 1,
+              'countryBestScore': null,
+              'countryRank': null,
+            },
+          ],
           'createdAt': decode(me)['createdAt'],
         });
         expect(

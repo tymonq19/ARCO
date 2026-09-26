@@ -15,15 +15,15 @@ const double maxHitOffset = paddleHalfWidth + Simulation.paddleAngularSlack;
 /// Inward unit normal at the ball's position.
 (double, double) inwardNormal(GameState s) {
   final r = ballDistance(s);
-  return (-s.ball.x / r, -s.ball.y / r);
+  return (-s.balls[0].x / r, -s.balls[0].y / r);
 }
 
 /// dot(ball direction, inward normal) — 1 when the ball flies straight back
 /// to the center, negative when it flies outward.
 double inwardDot(GameState s) {
   final (nx, ny) = inwardNormal(s);
-  final speed = s.ball.speed;
-  return (s.ball.vx * nx + s.ball.vy * ny) / speed;
+  final speed = s.balls[0].speed;
+  return (s.balls[0].vx * nx + s.balls[0].vy * ny) / speed;
 }
 
 /// Bounces the ball off the solo paddle after hitting it [offset] radians from
@@ -61,37 +61,39 @@ void main() {
       expect(s.events.map((e) => e.type), contains(GameEventType.paddleHit));
       final hit = s.events.firstWhere((e) => e.type == GameEventType.paddleHit);
       expect(hit.player, 0);
-      expect(s.ball.speed, closeTo(0.6 * hitSpeedFactor, 1e-12));
-      expect(s.ball.vy, greaterThan(0)); // paddle sits at the bottom
+      expect(s.balls[0].speed, closeTo(0.6 * hitSpeedFactor, 1e-12));
+      expect(s.balls[0].vy, greaterThan(0)); // paddle sits at the bottom
       expect(inwardDot(s), closeTo(1, 1e-6));
       expect(ballDistance(s), closeTo(contact, 1e-9));
-      expect(s.ball.owner, 0);
+      expect(s.balls[0].owner, 0);
       expect(s.players[0].combo, 1);
       expect(s.players[0].score, paddleHitScore);
       // The velocity vector stays consistent with `speed`.
       expect(
-        math.sqrt(s.ball.vx * s.ball.vx + s.ball.vy * s.ball.vy),
-        closeTo(s.ball.speed, 1e-12),
+        math.sqrt(
+          s.balls[0].vx * s.balls[0].vx + s.balls[0].vy * s.balls[0].vy,
+        ),
+        closeTo(s.balls[0].speed, 1e-12),
       );
     });
 
     test('caps the speed at maxSpeed (solo 1.6, duel 1.5)', () {
       final solo = bounceOffPaddle(speed: maxSpeedSolo);
-      expect(solo.ball.speed, maxSpeedSolo);
+      expect(solo.balls[0].speed, maxSpeedSolo);
 
       final duel = playingState(mode: GameMode.duel);
       duel.players[0].paddle.angle = bottomCenterAngle;
       launchRadial(duel, bottomCenterAngle, maxSpeedDuel, contact - 0.004);
       Simulation.step(duel, noneInputs(duel));
       expect(duel.events.map((e) => e.type), contains(GameEventType.paddleHit));
-      expect(duel.ball.speed, maxSpeedDuel);
+      expect(duel.balls[0].speed, maxSpeedDuel);
     });
 
     test('applies english of -(offset / halfWidth) * 0.55 radians', () {
       for (final offset in [-0.3, -0.2, -0.05, 0.0, 0.05, 0.2, 0.3]) {
         final s = bounceOffPaddle(offset: offset);
         final hitAngle = bottomCenterAngle + offset;
-        final outgoing = math.atan2(s.ball.vy, s.ball.vx);
+        final outgoing = math.atan2(s.balls[0].vy, s.balls[0].vx);
         // A purely radial approach reflects onto the inward normal, so the
         // whole deviation from it is the english.
         final deviation = DetMath.angleDiff(outgoing, hitAngle + DetMath.pi);
@@ -111,7 +113,7 @@ void main() {
         final hitAngle = bottomCenterAngle + offset;
         final tx = -math.sin(hitAngle);
         final ty = math.cos(hitAngle);
-        final tangential = s.ball.vx * tx + s.ball.vy * ty;
+        final tangential = s.balls[0].vx * tx + s.balls[0].vy * ty;
         expect(tangential.sign, offset.sign, reason: 'offset $offset');
       }
     });
@@ -162,8 +164,10 @@ void main() {
       // The corrected direction is still exactly a unit vector times speed
       // (the rotation uses a precomputed sine that must match minInwardDot).
       expect(
-        math.sqrt(s.ball.vx * s.ball.vx + s.ball.vy * s.ball.vy),
-        closeTo(s.ball.speed, 1e-15),
+        math.sqrt(
+          s.balls[0].vx * s.balls[0].vx + s.balls[0].vy * s.balls[0].vy,
+        ),
+        closeTo(s.balls[0].speed, 1e-15),
       );
     });
 
@@ -202,11 +206,11 @@ void main() {
       expect(s.players[0].combo, 0);
       expect(s.phase, Phase.serving);
       expect(s.serveTimer, serveTicks);
-      expect(s.ball.active, isFalse);
-      expect(s.ball.x, 0);
-      expect(s.ball.y, 0);
-      expect(s.ball.vx, 0);
-      expect(s.ball.vy, 0);
+      expect(s.balls[0].active, isFalse);
+      expect(s.balls[0].x, 0);
+      expect(s.balls[0].y, 0);
+      expect(s.balls[0].vx, 0);
+      expect(s.balls[0].vy, 0);
     });
 
     test('the serve fires after serveTicks with the SPEC speed ramp', () {
@@ -218,17 +222,19 @@ void main() {
       final ticks = stepUntil(s, GameEventType.serve, maxTicks: serveTicks + 5);
       expect(ticks, serveTicks);
       expect(s.phase, Phase.playing);
-      expect(s.ball.active, isTrue);
-      expect(s.ball.owner, -1);
+      expect(s.balls[0].active, isTrue);
+      expect(s.balls[0].owner, -1);
       final launchTick = s.tick - 1;
       final expected = math.min(
         baseSpeed + 0.01 * (launchTick / tickRate),
         maxServeSpeed,
       );
-      expect(s.ball.speed, closeTo(expected, 1e-12));
+      expect(s.balls[0].speed, closeTo(expected, 1e-12));
       expect(
-        math.sqrt(s.ball.vx * s.ball.vx + s.ball.vy * s.ball.vy),
-        closeTo(s.ball.speed, 1e-9),
+        math.sqrt(
+          s.balls[0].vx * s.balls[0].vx + s.balls[0].vy * s.balls[0].vy,
+        ),
+        closeTo(s.balls[0].speed, 1e-9),
       );
       // Solo serves point anywhere on the circle.
       final angles = <double>{};
@@ -237,7 +243,7 @@ void main() {
           GameConfig(mode: GameMode.solo, seed: seed),
         );
         stepUntil(g, GameEventType.serve, maxTicks: serveTicks + 1);
-        angles.add(math.atan2(g.ball.vy, g.ball.vx));
+        angles.add(math.atan2(g.balls[0].vy, g.balls[0].vx));
       }
       expect(angles.length, greaterThan(20));
     });
@@ -248,7 +254,7 @@ void main() {
       s.serveTimer = 1;
       s.tick = 60 * tickRate; // 60 s in: 0.55 + 0.6 > 0.95
       Simulation.step(s, noneInputs(s));
-      expect(s.ball.speed, maxServeSpeed);
+      expect(s.balls[0].speed, maxServeSpeed);
     });
 
     test('losing the last life ends the game and freezes the state', () {
@@ -322,15 +328,19 @@ void main() {
         final s = duelWithGap(throughBottom: bottom);
         stepUntil(s, GameEventType.lifeLost, maxTicks: 120);
         final loser = bottom ? 0 : 1;
-        expect(s.ball.owner, loser, reason: 'receiver carried while serving');
+        expect(
+          s.balls[0].owner,
+          loser,
+          reason: 'receiver carried while serving',
+        );
         expect(
           stepUntil(s, GameEventType.serve, maxTicks: serveTicks + 1),
           serveTicks,
         );
         final serve = s.events.firstWhere((e) => e.type == GameEventType.serve);
         expect(serve.player, loser);
-        expect(s.ball.owner, -1);
-        final direction = math.atan2(s.ball.vy, s.ball.vx);
+        expect(s.balls[0].owner, -1);
+        final direction = math.atan2(s.balls[0].vy, s.balls[0].vx);
         final center = loser == 0 ? bottomCenterAngle : topCenterAngle;
         expect(
           DetMath.angleDiff(direction, center).abs(),
@@ -453,21 +463,31 @@ void main() {
 
   group('walls', () {
     /// A vertical wall at x = 0.2 crossing the path of a ball fired along +x.
-    Wall barrier({required int age, int ttl = 600}) =>
-        Wall(id: 1, x1: 0.2, y1: -0.3, x2: 0.2, y2: 0.3, ttl: ttl, age: age);
+    Wall barrier({required int age, int ttl = 600}) => Wall.segment(
+      id: 1,
+      x1: 0.2,
+      y1: -0.3,
+      x2: 0.2,
+      y2: 0.3,
+      ttl: ttl,
+      age: age,
+    );
 
     test('a solid wall bounces the ball and credits its owner', () {
       final s = playingState();
       s.walls.add(barrier(age: wallFadeTicks));
       s.players[0].combo = 5; // multiplier 2
-      s.ball.owner = 0;
+      s.balls[0].owner = 0;
       launchBall(s, 0, 0, 0, 0.6);
       final ticks = stepUntil(s, GameEventType.wallHit, maxTicks: 40);
       expect(ticks, 15);
-      expect(s.ball.vx, lessThan(0));
-      expect(s.ball.speed, closeTo(0.6, 1e-12)); // walls do not change speed
+      expect(s.balls[0].vx, lessThan(0));
       expect(
-        segmentDistance(0.2, -0.3, 0.2, 0.3, s.ball.x, s.ball.y),
+        s.balls[0].speed,
+        closeTo(0.6, 1e-12),
+      ); // walls do not change speed
+      expect(
+        segmentDistance(0.2, -0.3, 0.2, 0.3, s.balls[0].x, s.balls[0].y),
         closeTo(Simulation.wallCapsuleRadius, 1e-9),
       );
       expect(s.players[0].score, wallHitScore * 2);
@@ -489,7 +509,7 @@ void main() {
       launchBall(s, 0, 0, 0, 0.6);
       final events = runCollecting(s, 35);
       expect(events.map((e) => e.type), isNot(contains(GameEventType.wallHit)));
-      expect(s.ball.x, greaterThan(0.3)); // flew straight through
+      expect(s.balls[0].x, greaterThan(0.3)); // flew straight through
       expect(s.walls.single.age, 35);
     });
 
@@ -501,7 +521,7 @@ void main() {
       expect(events.map((e) => e.type), isNot(contains(GameEventType.wallHit)));
       expect(events.map((e) => e.type), contains(GameEventType.wallExpire));
       expect(s.walls, isEmpty);
-      expect(s.ball.x, greaterThan(0.3));
+      expect(s.balls[0].x, greaterThan(0.3));
     });
 
     test('the ball never tunnels through a wall at maxSpeed (1000 shots)', () {
@@ -524,7 +544,7 @@ void main() {
         final x2 = cx + math.cos(phi) * half;
         final y2 = cy + math.sin(phi) * half;
         s.walls.add(
-          Wall(
+          Wall.segment(
             id: 1,
             x1: x1,
             y1: y1,
@@ -559,14 +579,14 @@ void main() {
 
         double sideOf(double px, double py) =>
             (x2 - x1) * (py - y1) - (y2 - y1) * (px - x1);
-        var prevX = s.ball.x;
-        var prevY = s.ball.y;
+        var prevX = s.balls[0].x;
+        var prevY = s.balls[0].y;
         var prevSide = sideOf(prevX, prevY);
         for (var t = 0; t < 200; t++) {
           Simulation.step(s, noneInputs(s));
-          if (s.phase != Phase.playing || !s.ball.active) break;
-          final x = s.ball.x;
-          final y = s.ball.y;
+          if (s.phase != Phase.playing || !s.balls[0].active) break;
+          final x = s.balls[0].x;
+          final y = s.balls[0].y;
           expect(
             segmentDistance(x1, y1, x2, y2, x, y),
             greaterThanOrEqualTo(Simulation.wallCapsuleRadius - 1e-9),
@@ -607,7 +627,7 @@ void main() {
         // wallCapsuleRadius per substep down the wall instead of out of it.
         final s = playingState();
         s.walls.add(
-          Wall(
+          Wall.segment(
             id: 1,
             x1: -0.2,
             y1: 0,
@@ -620,22 +640,22 @@ void main() {
         launchBall(s, 0, 0, 0, 0.6); // exactly on the segment, moving along it
         const perTick = 0.6 * dt;
         for (var i = 1; i <= 10; i++) {
-          final xBefore = s.ball.x;
+          final xBefore = s.balls[0].x;
           Simulation.step(s, noneInputs(s));
           expect(
-            s.ball.x - xBefore,
+            s.balls[0].x - xBefore,
             closeTo(perTick, 1e-9),
             reason: 'tick $i moved the ball by more than speed * dt',
           );
           expect(
-            segmentDistance(-0.2, 0, 0.2, 0, s.ball.x, s.ball.y),
+            segmentDistance(-0.2, 0, 0.2, 0, s.balls[0].x, s.balls[0].y),
             greaterThanOrEqualTo(Simulation.wallCapsuleRadius - 1e-9),
             reason: 'tick $i left the ball inside the wall capsule',
           );
-          expect(s.ball.speed, closeTo(0.6, 1e-12));
+          expect(s.balls[0].speed, closeTo(0.6, 1e-12));
         }
         // It came out perpendicular to the wall, onto the capsule surface.
-        expect(s.ball.y.abs(), closeTo(Simulation.wallCapsuleRadius, 1e-9));
+        expect(s.balls[0].y.abs(), closeTo(Simulation.wallCapsuleRadius, 1e-9));
       },
     );
 
@@ -670,14 +690,14 @@ void main() {
           spawns++;
           expect(w.age, 0);
           expect(w.ttl, inRange(wallMinLifetime, wallMaxLifetime));
-          final length = dist(w.x1, w.y1, w.x2, w.y2);
+          final length = wallLength(w);
           expect(length, inRange(wallMinLength - 1e-9, wallMaxLength + 1e-9));
           expect(
             dist(0, 0, w.centerX, w.centerY),
             lessThanOrEqualTo(wallSpawnRadius + 1e-9),
           );
           expect(
-            segmentDistance(w.x1, w.y1, w.x2, w.y2, s.ball.x, s.ball.y),
+            wallDistance(w, s.balls[0].x, s.balls[0].y),
             greaterThanOrEqualTo(wallMinDistFromBall - 1e-9),
           );
           for (final other in s.walls) {
@@ -739,7 +759,7 @@ void main() {
                 if (!known.add(w.id)) continue;
                 spawned++;
                 expect(
-                  segmentDistance(w.x1, w.y1, w.x2, w.y2, 0, 0),
+                  wallDistance(w, 0, 0),
                   greaterThanOrEqualTo(clearance - 1e-9),
                   reason:
                       'wall ${w.id} spawned across the serve point ($where)',
@@ -751,7 +771,7 @@ void main() {
                 // push-out of a wall, no bounce out of nowhere.
                 expect(
                   ballDistance(s),
-                  closeTo(s.ball.speed * dt, 1e-12),
+                  closeTo(s.balls[0].speed * dt, 1e-12),
                   reason: 'the serve was displaced by a wall ($where)',
                 );
                 expect(
@@ -766,7 +786,7 @@ void main() {
                 for (final w in s.walls) {
                   if (!w.solid) continue;
                   expect(
-                    segmentDistance(w.x1, w.y1, w.x2, w.y2, 0, 0),
+                    wallDistance(w, 0, 0),
                     greaterThanOrEqualTo(Simulation.wallCapsuleRadius - 1e-9),
                     reason: 'served inside wall ${w.id} ($where)',
                   );
@@ -815,7 +835,7 @@ void main() {
 
     test('solo credits player 0 even before the first paddle hit', () {
       final s = playingState();
-      expect(s.ball.owner, -1);
+      expect(s.balls[0].owner, -1);
       s.pickups.add(Pickup(id: 1, type: PickupType.star, x: 0.2, y: 0));
       launchBall(s, 0, 0, 0, 0.6);
       stepUntil(s, GameEventType.pickup, maxTicks: 30);
@@ -824,7 +844,7 @@ void main() {
 
     test('a duel pickup with no owner is removed without credit', () {
       final s = playingState(mode: GameMode.duel);
-      s.ball.owner = -1;
+      s.balls[0].owner = -1;
       s.pickups.add(Pickup(id: 1, type: PickupType.star, x: 0.2, y: 0));
       launchBall(s, 0, 0, 0, 0.6);
       stepUntil(s, GameEventType.pickup, maxTicks: 30);
@@ -837,7 +857,7 @@ void main() {
 
     test('a duel pickup is credited to the last hitter', () {
       final s = playingState(mode: GameMode.duel);
-      s.ball.owner = 1;
+      s.balls[0].owner = 1;
       s.players[1].combo = 10; // multiplier 3
       s.pickups.add(Pickup(id: 1, type: PickupType.star, x: 0.2, y: 0));
       launchBall(s, 0, 0, 0, 0.6);
@@ -884,7 +904,7 @@ void main() {
             lessThanOrEqualTo(pickupSpawnRadius + 1e-9),
           );
           expect(
-            dist(k.x, k.y, s.ball.x, s.ball.y),
+            dist(k.x, k.y, s.balls[0].x, s.balls[0].y),
             greaterThanOrEqualTo(pickupMinDistFromBall - 1e-9),
           );
           for (final other in s.pickups) {
@@ -896,7 +916,7 @@ void main() {
           }
           for (final w in s.walls) {
             expect(
-              segmentDistance(w.x1, w.y1, w.x2, w.y2, k.x, k.y),
+              wallDistance(w, k.x, k.y),
               greaterThanOrEqualTo(pickupMinDistFromWall - 1e-9),
             );
           }
@@ -998,7 +1018,11 @@ void main() {
       var ticks = 0;
       final inputs = <PlayerInput>[PlayerInput.none];
       while (s.phase != Phase.gameOver && ticks < 20000) {
-        inputs[0] = scriptedInput(s, 0, 1200);
+        // 1800 rallying ticks, not 1200: with shaped walls this seed's bot
+        // reached the dodging phase before it had touched a pickup, so the run
+        // was missing one event type for a reason that says nothing about the
+        // simulation.
+        inputs[0] = scriptedInput(s, 0, 1800);
         Simulation.step(s, inputs);
         seen.addAll(s.events.map((e) => e.type));
         ticks++;

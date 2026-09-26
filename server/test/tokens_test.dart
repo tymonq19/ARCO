@@ -11,6 +11,7 @@ import 'dart:convert';
 
 import 'package:arco_core/arco_core.dart';
 import 'package:arco_server/arco_server.dart';
+import 'package:crypto/crypto.dart';
 import 'package:http/http.dart' as http;
 import 'package:test/test.dart';
 
@@ -136,6 +137,79 @@ void main() {
         isNot(replayFingerprint(a)),
       );
     });
+
+    test('the ball count is part of the run', () {
+      // The same seed and the same inputs played with one ball and with two are
+      // two different games with two different scores. If they shared a ledger
+      // row the second one submitted would be told it had already been paid.
+      final oneBall = recordScoringSoloReplay(seed: 20260923);
+      final asTwoBall = Replay(
+        config: GameConfig(
+          mode: oneBall.config.mode,
+          seed: oneBall.config.seed,
+          ballCount: 2,
+        ),
+        inputs: oneBall.inputs,
+        finalTick: oneBall.finalTick,
+        claimedScore: oneBall.claimedScore,
+      );
+      expect(
+        replayFingerprint(asTwoBall),
+        isNot(replayFingerprint(oneBall)),
+        reason: 'only the ball count differs, and that is enough',
+      );
+    });
+
+    test('a one-ball digest is unchanged by boards existing', () {
+      // `token_awards` is keyed by this digest, so re-deriving it differently
+      // would orphan every row already in that ledger — and every run ever
+      // submitted could then be submitted again and paid again. The rule
+      // therefore has to reproduce the pre-board canonical string **byte for
+      // byte** for a one-ball run, which is what this rebuilds independently.
+      String legacyFingerprint(Replay replay) {
+        final canonical = StringBuffer()
+          ..write('arco-run-v1|')
+          ..write(replay.config.mode.index)
+          ..write('|')
+          ..write(replay.config.seed)
+          ..write('|')
+          ..write(replay.finalTick);
+        for (final log in replay.inputs) {
+          canonical.write('|');
+          var first = true;
+          for (final entry in log.toJson()) {
+            if (!first) canonical.write(',');
+            first = false;
+            canonical
+              ..write(entry[0])
+              ..write(':')
+              ..write(entry[1]);
+          }
+        }
+        return sha256.convert(utf8.encode(canonical.toString())).toString();
+      }
+
+      for (final seed in [20260923, 424242, 7]) {
+        final replay = recordScoringSoloReplay(seed: seed);
+        expect(replay.config.ballCount, 1);
+        expect(
+          replayFingerprint(replay),
+          legacyFingerprint(replay),
+          reason:
+              'seed $seed must keep the digest its ledger row was written '
+              'under',
+        );
+      }
+
+      // And a two-ball run is deliberately *not* in that namespace — it could
+      // not have been played before, so it has no history to preserve.
+      final twoBall = recordScoringSoloReplay(seed: 20260923, ballCount: 2);
+      expect(
+        replayFingerprint(twoBall),
+        isNot(legacyFingerprint(twoBall)),
+        reason: 'the two-ball namespace starts clean',
+      );
+    });
   });
 
   group('POST /api/scores', () {
@@ -255,7 +329,10 @@ void main() {
 
     test('a low-scoring run is stored and ranked but pays nothing', () async {
       final me = await issuePlayer(server, name: 'Tester');
-      final idle = recordSoloReplay(seed: 20260923);
+      // A seed whose idle run really does score under the earning threshold:
+      // an unattended paddle survives a few seconds and takes whatever the
+      // walls hand it, so some seeds cross 100 on wall bounces alone.
+      final idle = recordSoloReplay(seed: 20260925);
       expect(idle.claimedScore, lessThan(TokenRate.scorePerToken));
       final r = await submit(idle, auth: authOf(me));
       expect(r.statusCode, 201, reason: r.body);
@@ -385,6 +462,116 @@ void main() {
         );
         expect(await server.store.walletBalance(id), TokenRate.dailyCap);
       });
+    });
+
+    group('a second board does not widen the economy', () {
+      late Replay twoBall;
+
+      setUpAll(() {
+        twoBall = recordScoringSoloReplay(seed: 20260923, ballCount: 2);
+        final check = ReplayVerifier.verify(twoBall);
+        expect(
+          check.ok,
+          isTrue,
+          reason: 'fixture must verify: ${check.reason}',
+        );
+        expect(check.score, greaterThan(TokenRate.scorePerToken));
+      });
+
+      test('a two-ball run pays at exactly the published rate', () async {
+        // No per-mode rate: a Spark is a Spark, so the shop's prices mean the
+        // same thing whichever game paid for them.
+        final me = await issuePlayer(server);
+        final r = await submit(twoBall, auth: authOf(me), name: 'Duo');
+        expect(r.statusCode, 201, reason: r.body);
+        expect(decode(r)['balls'], 2);
+        expect(decode(r)['tokens'], TokenRate.forScore(twoBall.claimedScore));
+        expect(
+          decode(r)['tokenBalance'],
+          TokenRate.forScore(twoBall.claimedScore),
+        );
+      });
+
+      test('one wallet and one day\'s allowance cover both boards', () async {
+        // The protection that actually matters: boards are a leaderboard
+        // concept, not a wallet one. A player who has spent the day on one-ball
+        // runs cannot start again on the two-ball board.
+        final me = await issuePlayer(server);
+        final id = me['id'] as String;
+        final today = DateTime.now().toUtc();
+        for (var run = 0; run < 4; run++) {
+          await server.store.awardTokens(
+            playerId: id,
+            scoreId: 'one-ball-$run',
+            score: TokenRate.scoreAtRunCap,
+            replayKey: 'one-ball-$run',
+            now: today,
+          );
+        }
+        expect(await server.store.walletBalance(id), TokenRate.dailyCap);
+
+        final r = await submit(twoBall, auth: authOf(me), name: 'Duo');
+        expect(r.statusCode, 201, reason: r.body);
+        expect(
+          decode(r)['tokens'],
+          0,
+          reason: 'the day is spent, whichever board the run was on',
+        );
+        expect(decode(r)['tokenBalance'], TokenRate.dailyCap);
+        expect(await server.store.walletBalance(id), TokenRate.dailyCap);
+      });
+
+      test('a two-ball run is still deduplicated', () async {
+        final me = await issuePlayer(server);
+        final first = await submit(twoBall, auth: authOf(me), name: 'Duo');
+        final paid = decode(first)['tokens'] as int;
+        expect(paid, greaterThan(0));
+        final again = await submit(twoBall, auth: authOf(me), name: 'Duo');
+        expect(again.statusCode, 201, reason: again.body);
+        expect(
+          decode(again)['tokens'],
+          paid,
+          reason: 'a retry reports the original award and credits nothing',
+        );
+        expect(await server.store.walletBalance(me['id'] as String), paid);
+
+        // And somebody else's copy of it is worth nothing at all, exactly as on
+        // the classic board.
+        final thief = await issuePlayer(server);
+        final stolen = await submit(
+          twoBall,
+          auth: authOf(thief),
+          name: 'Thief',
+        );
+        expect(decode(stolen)['tokens'], 0);
+        expect(await server.store.walletBalance(thief['id'] as String), 0);
+      });
+
+      test(
+        'the same seed on both boards pays twice, because it is two runs',
+        () async {
+          final me = await issuePlayer(server);
+          final oneBall = await submit(scoring, auth: authOf(me));
+          expect(oneBall.statusCode, 201, reason: oneBall.body);
+          final firstPayment = decode(oneBall)['tokens'] as int;
+          expect(firstPayment, greaterThan(0));
+          expect(decode(oneBall)['balls'], 1);
+
+          final other = await submit(twoBall, auth: authOf(me), name: 'Duo');
+          expect(other.statusCode, 201, reason: other.body);
+          expect(
+            decode(other)['tokens'],
+            greaterThan(0),
+            reason:
+                'a different game with a different score is a different run',
+          );
+          expect(decode(other)['balls'], 2);
+          expect(
+            decode(other)['tokenBalance'],
+            firstPayment + (decode(other)['tokens'] as int),
+          );
+        },
+      );
     });
 
     group('the daily cap', () {

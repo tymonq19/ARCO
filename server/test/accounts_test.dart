@@ -284,6 +284,16 @@ void main() {
         expect(body['games'], 1);
         expect(body['bestScore'], replay.claimedScore);
         expect(body['rank'], 1);
+        expect(body['boards'], [
+          {
+            'balls': 1,
+            'games': 1,
+            'bestScore': replay.claimedScore,
+            'rank': 1,
+            'countryBestScore': null,
+            'countryRank': null,
+          },
+        ]);
         expect(
           body['linkedAt'],
           matches(r'^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$'),

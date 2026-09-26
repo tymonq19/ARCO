@@ -25,9 +25,12 @@ const Size iPhoneSe = Size(375, 667);
   int seed, {
   int ticks = 400,
   int frames = 60,
+  int ballCount = minBallCount,
   GameTheme theme = GameThemes.neon,
 }) {
-  final state = GameState.initial(GameConfig(mode: mode, seed: seed));
+  final state = GameState.initial(
+    GameConfig(mode: mode, seed: seed, ballCount: ballCount),
+  );
   final inputs = <PlayerInput>[
     for (var i = 0; i < state.config.playerCount; i++) PlayerInput.none,
   ];
@@ -44,7 +47,7 @@ const Size iPhoneSe = Size(375, 667);
   final fx = FxState()..theme = theme;
   for (var f = 0; f < frames; f++) {
     step();
-    fx.trackBall(state.ball);
+    fx.trackBalls(state.balls);
     fx.update(1 / 60);
   }
   return (state: state, fx: fx);
@@ -87,7 +90,7 @@ GameState _ballAt(double x, double y) {
   );
   state.phase = Phase.playing;
   state.serveTimer = 0;
-  state.ball
+  state.balls[0]
     ..active = true
     ..x = x
     ..y = y
@@ -106,7 +109,7 @@ FxState _seededWake(GameState state, GameTheme theme) {
     ..theme = theme
     ..time = 0.62
     ..frames = 600;
-  final ball = state.ball;
+  final ball = state.balls[0];
   final x = ball.x;
   final y = ball.y;
   const dt = 1 / 60;
@@ -196,11 +199,11 @@ void main() {
     ) async {
       final pose = livePose(GameMode.solo, 7, ticks: 60, frames: 0);
       // Between serves: no wake, no ball, the paddle still drawn.
-      pose.state.ball.active = false;
+      pose.state.balls[0].active = false;
       // And a ball that is somehow standing still, which is what a zero-length
       // velocity is: the art still needs a direction to point its nose at.
       final still = livePose(GameMode.solo, 7, ticks: 200);
-      still.state.ball
+      still.state.balls[0]
         ..vx = 0
         ..vy = 0;
       for (final ball in BallSkin.values) {
@@ -257,7 +260,7 @@ void main() {
       // only thing that can differ between the two frames is the ball.
       final state = _ballAt(0.15, 0.1);
       final fx = _seededWake(state, theme);
-      final blank = _ballAt(0.15, 0.1)..ball.active = false;
+      final blank = _ballAt(0.15, 0.1)..balls[0].active = false;
       final at = geometry.toScreen(fx.ballX, fx.ballY);
       await tester.runAsync(() async {
         final without = await render(
@@ -305,12 +308,12 @@ void main() {
       final state = GameState.initial(
         const GameConfig(mode: GameMode.solo, seed: 5),
       );
-      state.ball.active = false;
+      state.balls[0].active = false;
       state.players[0].paddle.angle = bottomCenterAngle;
       final elsewhere = GameState.initial(
         const GameConfig(mode: GameMode.solo, seed: 5),
       );
-      elsewhere.ball.active = false;
+      elsewhere.balls[0].active = false;
       elsewhere.players[0].paddle.angle = topCenterAngle;
       final fx = FxState()..theme = theme;
       Offset onRing(double angle) => geometry.toScreen(

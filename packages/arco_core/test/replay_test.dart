@@ -189,7 +189,7 @@ void main() {
 
     test('rejects an unsupported format version', () {
       final r = recordGame().replay;
-      for (final version in [0, 2, 99]) {
+      for (final version in [0, 1, Replay.version + 1, 99]) {
         final other = Replay(
           config: r.config,
           inputs: r.inputs,

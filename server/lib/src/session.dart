@@ -7,6 +7,7 @@ import 'dart:async';
 import 'package:arco_core/arco_core.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 
+import 'duel_ball_count.dart';
 import 'logging.dart';
 import 'rate_limit.dart';
 import 'room.dart';
@@ -207,7 +208,16 @@ class ClientSession {
       _violation('bad_message');
       return;
     }
-    final msg = ClientMsg.decode(frame);
+    // Decoded to a map first, then parsed: `create` carries the ball count in an
+    // additive field core's parser does not model (see `duel_ball_count.dart`),
+    // and reading it off the raw object is what keeps that field out of the
+    // shared protocol classes until they carry it themselves.
+    final json = decodeFrame(frame);
+    if (json == null) {
+      _violation('bad_message');
+      return;
+    }
+    final msg = ClientMsg.parse(json);
     if (msg == null) {
       _violation('bad_message');
       return;
@@ -226,7 +236,15 @@ class ClientSession {
       case HelloMsg():
         _violation('bad_message');
       case CreateRoomMsg():
-        registry.create(this);
+        final balls = ballCountOf(json);
+        if (balls == null) {
+          // No room is created: the creator asked for a game this build cannot
+          // run, and opening a different one would put both players in a match
+          // nobody chose.
+          _violation(badBallCountError);
+          return;
+        }
+        registry.create(this, ballCount: balls);
       case JoinRoomMsg(:final code):
         // The per-IP budget is consulted before the code is looked up, so a
         // spent budget answers nothing a guesser could learn from.

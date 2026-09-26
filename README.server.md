@@ -21,9 +21,10 @@ Smoke test:
 
 ```bash
 curl localhost:8080/api/health                 # {"ok":true,"version":"1.0.0","rooms":0,"accounts":[]}
-curl 'localhost:8080/api/leaderboard?period=week&limit=10'
+curl 'localhost:8080/api/leaderboard?period=week&limit=10'     # the one-ball board
+curl 'localhost:8080/api/leaderboard?balls=2&period=week'      # the two-ball board
 curl 'localhost:8080/api/leaderboard?country=PL&period=week'   # national board
-curl 'localhost:8080/api/leaderboard/rank?score=1000&country=PL'
+curl 'localhost:8080/api/leaderboard/rank?score=1000&country=PL&balls=2'
 ```
 
 Tests (boot a real server on an ephemeral port, play a full duel over two
@@ -34,6 +35,16 @@ cd server
 dart analyze
 dart test
 dart format .
+```
+
+`tool/e2e_smoke.dart` is the cross-process check: it talks to a server that is
+already running, over real sockets, exactly as the app does. Six steps — health,
+a solo replay submitted and listed, a tampered score refused, a two-ball replay
+filed on its own board, a duel over two WebSockets, and a two-ball duel room:
+
+```bash
+PORT=18100 DB_PATH=/tmp/cp_smoke.db dart run bin/server.dart &
+dart run tool/e2e_smoke.dart http://localhost:18100
 ```
 
 The end-to-end duel test uses the one test-only knob the server exposes:
@@ -102,12 +113,12 @@ graceful shutdown (tick driver stopped, sockets closed, database closed).
 | route | purpose |
 |---|---|
 | `GET /api/health` | `{"ok":true,"version":"1.0.0","rooms":N,"accounts":["apple",…],"catalogue":N,"purchases":false,"ads":false}`; `accounts` is empty when the feature is off, and the two money flags say whether this deployment can take money at all (the one-time unlock, SPEC §4.9) and whether it credits ads. Neither says anything about one player |
-| `GET /api/leaderboard?period=all\|week\|day&country=PL&limit=100` | top scores, `limit` clamped to 100; `country` composes with `period` and is the national board; an entry carries `playerId` when the run is owned and `country` when it had one; `400` `invalid_country` |
-| `GET /api/leaderboard/rank?score=N&period=…&country=PL` | `{"rank":K}`, `1 +` the number of better scores in that scope |
-| `POST /api/scores` | `{"name":…,"replay":…[,"country":"PL"]}` → `201` with `{id,score,rank[,playerId][,country,countryRank]}`; `400` `invalid_json` / `invalid_name` / `offensive_name` / `invalid_replay` / `unsupported_version` / `replay_mismatch`, `401` bad credentials, `413` over 2 MB, `429` over 10 submissions per IP per minute |
+| `GET /api/leaderboard?period=all\|week\|day&country=PL&balls=1\|2&limit=100` | top scores of one **board**, `limit` clamped to 100; `balls` names the board (absent → the one-ball board) and composes with `period` and `country`; the answer carries `balls` in the envelope; an entry carries `playerId` when the run is owned and `country` when it had one; `400` `invalid_country` / `invalid_balls` |
+| `GET /api/leaderboard/rank?score=N&period=…&country=PL&balls=1\|2` | `{"rank":K,"balls":N}`, `1 +` the number of better scores in that scope |
+| `POST /api/scores` | `{"name":…,"replay":…[,"country":"PL"]}` → `201` with `{id,score,rank,balls[,playerId][,country,countryRank]}`; `balls` is taken from the replay, never from the request; `400` `invalid_json` / `invalid_name` / `offensive_name` / `invalid_replay` / `unsupported_version` / `replay_mismatch`, `401` bad credentials, `413` over 2 MB, `429` over 10 submissions per IP per minute |
 | `POST /api/players` | issues an anonymous player → `201` with `{id,secret,name}`; `400` `invalid_json` / `invalid_name` / `offensive_name`, `413` over 4 KB, `429` over 10 issues per IP per minute |
-| `GET /api/players/me` | the caller's `{name,bestScore,rank,games,country,countryBestScore,countryRank,createdAt}`, plus `{provider,linkedAt}` once an account is linked; `401` `missing_credentials` / `invalid_credentials` |
-| `POST /api/account/link` | sign in with Apple / Google → `200` with `{id,secret,outcome,…}`; `400` `invalid_json` / `invalid_provider`, `401` `invalid_credentials` / `invalid_token`, `409` `already_linked`, `413` over 8 KB, `429`, `503` `keys_unavailable`, `404` `accounts_disabled` |
+| `GET /api/players/me` | the caller's `{name,bestScore,rank,games,country,countryBestScore,countryRank,boards,createdAt}`, plus `{provider,linkedAt}` once an account is linked; `boards` is one entry per board actually played and the top-level standing is the one-ball board; `401` `missing_credentials` / `invalid_credentials` |
+| `POST /api/account/link` | sign in with Apple / Google → `200` with `{id,secret,outcome,boards,…}` — the same standing `GET /api/players/me` reports, because a merge changes it; `400` `invalid_json` / `invalid_provider`, `401` `invalid_credentials` / `invalid_token`, `409` `already_linked`, `413` over 8 KB, `429`, `503` `keys_unavailable`, `404` `accounts_disabled` |
 | `POST /api/account/unlink` | detaches the account, keeps the player and its runs → `200 {unlinked}` |
 | `DELETE /api/players/me` | deletes the caller's player, anonymises its runs → `200 {deleted,scoresAnonymised}` |
 | `GET /api/shop/catalogue?v=N` | what can be owned, what it costs in Sparks, what the caller owns and wears, plus `premium` and the one-time unlock of SPEC §4.9 (`unlock: {productId,nameKey}` — absent when `PURCHASES_ENABLED` is off, and absent once the caller is premium) |
@@ -698,6 +709,86 @@ call a `401` before any cryptography runs. Set it, and the same value must be in
 the SSV URL in the AdMob console; forget one side and every reward is a `401` with
 a log line naming the variable.
 
+## Boards: one leaderboard per game
+
+A two-ball game is a different game — two balls to keep alive, two paddle hits
+per rally, a run that scores faster per second and ends sooner. Ranking the two
+together would make the one-ball board, the classic one and the only one that
+existed until now, read as if it had been overtaken by runs that were not
+playing the same game. So every stored run carries the ball count it was played
+with and **every query names a board**. There is no combined board, and no way
+to ask for one.
+
+```
+POST /api/scores    {"name":"Ada","replay":<one-ball replay>}
+201  {"ok":true,"id":"…","score":2113,"rank":1,"balls":1}
+
+POST /api/scores    {"name":"Duo","replay":<two-ball replay>}
+201  {"ok":true,"id":"…","score":3606,"rank":1,"balls":2}   # rank 1 of its own board
+
+GET  /api/leaderboard                      # a client that never heard of boards
+200  {"balls":1,"entries":[{"rank":1,"name":"Ada",…}]}      # the classic board, whole
+
+GET  /api/leaderboard?balls=2&period=week&country=PL
+200  {"balls":2,"entries":[…]}                              # all three filters compose
+
+GET  /api/leaderboard?balls=3
+400  {"ok":false,"error":"invalid_balls","detail":"balls must be between 1 and 2"}
+```
+
+* **The board comes from the replay, never from the request.** There is no
+  `balls` field on a submission: it is `replay.cfg.n`, the config the server
+  re-simulated, so a run cannot be filed on a board it was not played on. The
+  `201` echoes it so a client can confirm which board its rank is measured
+  against.
+* **A request naming no board gets the one-ball board.** Not the two mixed —
+  that board does not exist. One is the default of `GameConfig.ballCount`, so a
+  request that says nothing gets the board matching the game a client that says
+  nothing plays; and since every row stored before this change is a one-ball run,
+  an old client asking the old question gets exactly the board it always got, all
+  of it. `?balls=` (empty) is the same as absent. A value outside 1..2 is
+  `400 invalid_balls` rather than quietly substituted, the same treatment
+  `country` and `period` have always had.
+* **Rows written before this change are one-ball rows.** `scores.balls` is
+  `NOT NULL DEFAULT 1`, so the upgrade reads every existing row as what it was:
+  two balls could not be played, so there is nothing to guess. This is why the
+  migration cannot hide anything — see *Operating notes* below.
+* `GET /api/players/me` reports `boards`, one entry per board the player has
+  actually played, each with its own `games`, `bestScore`, `rank`,
+  `countryBestScore` and `countryRank`. A player who has submitted nothing gets
+  `[]`. The **top-level** `bestScore`, `rank` and national numbers stay the
+  one-ball board — what they always described — so a client that knows nothing
+  about boards keeps reading a true number; `games` is every run on either board.
+* **Boards are a leaderboard concept and nothing else.** One wallet, one daily
+  Spark allowance, one submission rate limit and one replay ledger cover both, so
+  a second board is not a second allowance to earn or to flood from.
+* **The Spark rate did not change, and that is a decision.** Measured against the
+  real simulation with a paddle that chases the ball it has to meet: a *surviving*
+  two-ball run scores about **1.4×** the one-ball rate per second, and a typical
+  two-ball run ends far sooner and pays **less** than a one-ball one, because the
+  paddle cannot cover two balls. So "a two-ball game scores faster" is true per
+  second and false per run. What bounds earning anyway is not the rate but
+  `maxTokensPerRun = 50` and `dailyCap = 200`, which are per run and per
+  player-day: four capped runs a day is four capped runs whatever the ball count,
+  and those caps are shared across the boards. A per-mode rate would have to be
+  explained in the UI as "two-ball runs pay less", which a player experiences as a
+  con — and it would make the catalogue's prices mean different things in
+  different games. The run digest *does* now include the ball count, so the two
+  games are two runs in the ledger; it is written so a one-ball digest is
+  byte-identical to the previous build's, because `token_awards` is keyed by it
+  and re-deriving it differently would let every run ever submitted be paid a
+  second time.
+* `idx_scores_balls (balls, score DESC, created_at)` and
+  `idx_scores_balls_country (balls, country, score DESC, created_at)` make a
+  board's top 100 a prefix scan, so the filter costs no sort.
+
+**Duel rooms** carry the count too (SPEC §3): the creator sends
+`{"t":"create","n":2}`, both players get it back on `room` — which is how the
+joining player learns what they joined, before the countdown — and on `start`,
+and it is fixed for the room's life including rematches. A count outside 1..2 is
+`{"t":"error","code":"bad_balls"}` and no room is created. A `create` without
+`n` is a one-ball room.
+
 ## National leaderboard
 
 A global top 100 is unreachable for an ordinary player, so it stops being a goal
@@ -736,11 +827,15 @@ GET  /api/leaderboard?country=XX
   instead, because answering a request for one country's board with the whole
   world's is a wrong answer rather than a lenient one — the same treatment
   `period` has always had.
-* `country` composes with `period`, and `rank` is the position inside the
-  returned board (1..N). Someone who is 4 000th in the world can be 12th at home.
+* `country` composes with `period` and `balls`, and `rank` is the position inside
+  the returned board (1..N). Someone who is 4 000th in the world can be 12th at
+  home.
 * `GET /api/players/me` reports `country`, `countryBestScore` and `countryRank`.
   The country is the one the player's **newest run carried**, the same rule the
-  display name follows, and a run with no country does not clear it.
+  display name follows, and a run with no country does not clear it — it is one
+  fact about the person, not one per board, because somebody who plays both games
+  plays them in the same place. The national *standing* is per board, so each
+  `boards` entry carries its own `countryBestScore` and `countryRank`.
   `countryBestScore` is their best run *that counts for that country*, not their
   best run overall: a player who moved would otherwise be given a national rank
   their rows do not support, and the number beside their name would not match the
@@ -985,3 +1080,25 @@ same Wi-Fi (`http://192.168.x.y:8080`).
 * A run stored with `country=-` in the score line carried no usable country code
   — normal for an older client, and worth a look if *every* line says it while
   the app is meant to be sending one.
+* The score line carries `balls=N`, so which board a run went to is in the log
+  without a query. `room <code> created by <name> with N ball(s)` does the same
+  for duel rooms.
+* **Upgrading to the board schema (`user_version` 8).** The database upgrades in
+  place on open, as always, and this one adds a single column,
+  `scores.balls NOT NULL DEFAULT 1`, plus two indexes. Every existing row reads
+  `balls = 1`, which is the truth about it rather than a backfill: until this
+  version the simulation had exactly one ball. Nothing is dropped, nothing is
+  rewritten, no row is moved. After the upgrade `GET /api/leaderboard` with no
+  `balls` parameter returns exactly the board it returned before, in the same
+  order — so a deployed app that has not been updated sees no change at all on
+  that route. `dart test test/migration_test.dart` covers this upgrade from a
+  file written by the current (version 7) schema, including over HTTP.
+* **After this release, the deployed app can no longer submit scores.** The
+  simulation changed (wall shapes and ball counts), so a replay recorded by the
+  old build cannot be re-simulated: `POST /api/scores` answers
+  `400 unsupported_version`, checked before anything is simulated and before
+  `VERIFY_REPLAYS` is consulted. That code means *the app is too old*, not *this
+  score is bad*, and the app renders it as "update the app". Duel sockets from an
+  old build are already refused at `hello` with `bad_version`, because
+  `protocolVersion` went from 1 to 2. Scores already stored are untouched, and an
+  old client can still read the leaderboard.

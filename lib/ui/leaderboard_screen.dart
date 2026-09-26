@@ -1,5 +1,6 @@
 import 'dart:math' as math;
 
+import 'package:arco_core/arco_core.dart';
 import 'package:flutter/foundation.dart' show listEquals;
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
@@ -16,14 +17,18 @@ import 'widgets/neon_button.dart';
 import 'widgets/neon_panel.dart';
 import 'widgets/nickname_dialog.dart';
 
-/// One tab: a period, and the country it is restricted to (SPEC §4.6) — null
-/// for the global board. A record, so two boards compare by value and can key
-/// the caches below.
-typedef _Board = (LeaderboardPeriod period, String? country);
+/// One board: how many balls the game was played with, a period, and the country
+/// it is restricted to (SPEC §4.6) — null for the global board. A record, so two
+/// boards compare by value and can key the caches below.
+///
+/// The ball count is part of the key rather than another tab: it is a different
+/// *game*, not another slice of the same one (SPEC §2.3), so it is switched above
+/// the tab strip and every period is cached per count.
+typedef _Board = (int balls, LeaderboardPeriod period, String? country);
 
-/// Global top 100 for three periods plus the player's own country, with
-/// pull-to-refresh and an offline state. Own entries are highlighted by player
-/// id, falling back to the submissions this device remembers.
+/// Global top 100 for three periods plus the player's own country, per ball
+/// count, with pull-to-refresh and an offline state. Own entries are highlighted
+/// by player id, falling back to the submissions this device remembers.
 class LeaderboardScreen extends StatefulWidget {
   const LeaderboardScreen({super.key});
 
@@ -39,6 +44,14 @@ class _LeaderboardScreenState extends State<LeaderboardScreen>
   late List<_Board> _boards;
   late TabController _tabs;
 
+  /// Which game's board is on screen (SPEC §2.3).
+  ///
+  /// It opens on the board the player's own chosen game counts for — but only if
+  /// they have actually played that game. A player who has never played two balls
+  /// is shown the classic board, because the alternative is opening the
+  /// leaderboard on an empty list with nothing to do about it.
+  late int _balls;
+
   final Map<_Board, List<LeaderboardEntry>> _entries = {};
   final Map<_Board, bool> _loading = {};
   final Map<_Board, bool> _failed = {};
@@ -48,6 +61,10 @@ class _LeaderboardScreenState extends State<LeaderboardScreen>
     super.initState();
     _identity = context.read<PlayerIdentity>();
     _identity.addListener(_onIdentityChanged);
+    final settings = context.read<Settings>();
+    _balls = settings.hasPlayed(settings.ballCount)
+        ? settings.ballCount
+        : minBallCount;
     _boards = _boardsFor(_identity.country);
     _tabs = _newController(0);
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -72,9 +89,9 @@ class _LeaderboardScreenState extends State<LeaderboardScreen>
   /// country when one is known (SPEC §4.6). Nothing national is shown to a
   /// player whose device names no country — an empty tab would be worse than
   /// no tab.
-  static List<_Board> _boardsFor(String? country) => <_Board>[
-    for (final period in LeaderboardPeriod.values) (period, null),
-    if (country != null) (LeaderboardPeriod.all, country),
+  List<_Board> _boardsFor(String? country) => <_Board>[
+    for (final period in LeaderboardPeriod.values) (_balls, period, null),
+    if (country != null) (_balls, LeaderboardPeriod.all, country),
   ];
 
   TabController _newController(int index) =>
@@ -122,11 +139,12 @@ class _LeaderboardScreenState extends State<LeaderboardScreen>
       _loading[board] = true;
       _failed[board] = false;
     });
-    final (period, country) = board;
+    final (balls, period, country) = board;
     try {
       final entries = await context.read<ApiClient>().leaderboard(
         period,
         country: country,
+        ballCount: balls,
       );
       if (!mounted) return;
       setState(() {
@@ -234,6 +252,7 @@ class _LeaderboardScreenState extends State<LeaderboardScreen>
           child: LayoutBuilder(
             builder: (context, constraints) => Column(
               children: [
+                _boardSwitch(s),
                 // The second moment the account offer belongs to (SPEC 4.5):
                 // the player is on this board, so "keep your place on it" is
                 // about something they are looking at. Only when a row on the
@@ -273,6 +292,101 @@ class _LeaderboardScreenState extends State<LeaderboardScreen>
     );
   }
 
+  /// Which of the two games' boards is shown, and the way to the other one
+  /// (SPEC §2.3, §4.6).
+  ///
+  /// Above the period tabs, not among them: the period slices one board, while
+  /// the ball count picks a different board, and a strip of six tabs that mixed
+  /// the two would not say which is which. The named row makes the answer to
+  /// "which board am I looking at" a sentence rather than an inference.
+  Widget _boardSwitch(Strings s) {
+    final theme = GameTheme.of(context);
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 12, 12, 4),
+      child: Row(
+        children: [
+          Padding(
+            padding: const EdgeInsets.only(right: 10),
+            child: Text(
+              theme.heading(s.t('lb.board')),
+              style: TextStyle(
+                color: theme.textDim,
+                fontSize: 11,
+                letterSpacing: 2,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ),
+          for (var n = minBallCount; n <= maxBallCount; n++)
+            _boardChip(theme, s, n),
+        ],
+      ),
+    );
+  }
+
+  Widget _boardChip(GameTheme theme, Strings s, int balls) {
+    final selected = balls == _balls;
+    final label = s.balls(balls);
+    return Expanded(
+      child: Semantics(
+        button: true,
+        inMutuallyExclusiveGroup: true,
+        selected: selected,
+        label: label,
+        child: ExcludeSemantics(
+          child: GestureDetector(
+            onTap: selected ? null : () => _switchBoard(balls),
+            behavior: HitTestBehavior.opaque,
+            child: Container(
+              constraints: const BoxConstraints(minHeight: 38),
+              alignment: Alignment.center,
+              margin: const EdgeInsets.only(left: 6),
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+              decoration: ShapeDecoration(
+                color: selected
+                    ? theme.accentLeaderboard.withValues(alpha: 0.18)
+                    : Colors.transparent,
+                shape: theme.border(
+                  theme.radius(0.5),
+                  color: selected ? theme.accentLeaderboard : theme.outline,
+                  width: 1,
+                ),
+              ),
+              child: FittedBox(
+                fit: BoxFit.scaleDown,
+                child: Text(
+                  label,
+                  maxLines: 1,
+                  softWrap: false,
+                  style: TextStyle(
+                    color: selected ? theme.textPrimary : theme.textDim,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// Shows the [balls]-ball board, keeping the period the player was reading.
+  ///
+  /// The tab index survives the switch: somebody comparing today's two boards
+  /// should not be dropped back onto "all time" for having done so. Each board is
+  /// cached under its own key, so coming back does not re-fetch.
+  void _switchBoard(int balls) {
+    if (balls == _balls) return;
+    final index = _tabs.index;
+    setState(() {
+      _balls = balls;
+      _boards = _boardsFor(_identity.country);
+    });
+    _load(_boards[math.min(index, _boards.length - 1)]);
+  }
+
   /// Whether one of the rows on [board] belongs to this player (SPEC §4.4):
   /// their id on the row, or a submission this device remembers making.
   bool _hasOwnEntry(_Board board) {
@@ -287,7 +401,7 @@ class _LeaderboardScreenState extends State<LeaderboardScreen>
   /// A national board is labelled with the country itself — its flag and code —
   /// rather than with a period, because that is what makes it a different board.
   String _label(Strings s, _Board board) {
-    final (period, country) = board;
+    final (_, period, country) = board;
     if (country != null) return s.country(country);
     return switch (period) {
       LeaderboardPeriod.all => s.t('lb.all'),
@@ -335,7 +449,7 @@ class _LeaderboardScreenState extends State<LeaderboardScreen>
     }
     final myName = context.read<Settings>().playerName;
     final list = entries ?? const <LeaderboardEntry>[];
-    final country = board.$2;
+    final country = board.$3;
     return RefreshIndicator(
       onRefresh: () => _load(board, force: true),
       color: theme.accent,

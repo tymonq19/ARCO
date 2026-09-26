@@ -397,6 +397,11 @@ class FakeApiClient extends ApiClient {
   Map<String, List<LeaderboardEntry>> countryEntries =
       <String, List<LeaderboardEntry>>{};
 
+  /// Entries for the two-ball board (SPEC 2.3 / 4.6); null answers an empty
+  /// board, which is what a deployment nobody has played two balls on looks
+  /// like.
+  List<LeaderboardEntry>? twoBallEntries;
+
   bool offline;
 
   /// Answered by every submission unless [submitResults] still has one queued.
@@ -460,6 +465,9 @@ class FakeApiClient extends ApiClient {
   final List<String?> submitCountries = <String?>[];
   final List<String?> leaderboardCountries = <String?>[];
 
+  /// The `balls` parameter of each leaderboard call, in order (SPEC 4.6).
+  final List<int> leaderboardBallCounts = <int>[];
+
   /// The `Authorization` header value of the last submission, or null when it
   /// went out anonymously.
   String? get lastAuthHeader =>
@@ -522,10 +530,15 @@ class FakeApiClient extends ApiClient {
     LeaderboardPeriod period, {
     int limit = 100,
     String? country,
+    int ballCount = minBallCount,
   }) async {
     leaderboardCalls++;
     leaderboardCountries.add(country);
+    leaderboardBallCounts.add(ballCount);
     if (offline) throw const ApiException(ApiErrorKind.network, 'offline');
+    if (ballCount >= 2) {
+      return twoBallEntries ?? const <LeaderboardEntry>[];
+    }
     if (country == null) return entries;
     return countryEntries[country] ?? const <LeaderboardEntry>[];
   }
@@ -581,7 +594,7 @@ class FakeApiClient extends ApiClient {
   }
 
   @override
-  Future<int> rank(int score) async => 7;
+  Future<int> rank(int score, {int ballCount = minBallCount}) async => 7;
 
   // ------------------------------------------------- cosmetic shop (SPEC 4.8)
 
@@ -1312,9 +1325,18 @@ class FakeDuelServer implements WsTransport {
   final StreamController<dynamic> _out = StreamController<dynamic>();
   final List<ClientMsg> received = <ClientMsg>[];
 
+  /// Every client frame as raw JSON, for the fields the core's message classes
+  /// do not model yet — the ball count of SPEC 2.3 travels as `n`.
+  final List<Map<String, dynamic>> frames = <Map<String, dynamic>>[];
+
   String code = 'KX7Q';
   String clientName = '';
   bool closed = false;
+
+  /// Balls this room plays with (SPEC 2.3). Set from the `create` frame, and
+  /// echoed on `room` and `start` the way a v2 server does; a test playing the
+  /// joiner sets it directly, which is the creator having chosen it.
+  int ballCount = minBallCount;
 
   /// Usable as a [WsConnector].
   Future<WsTransport> connect(Uri uri) async => this;
@@ -1324,18 +1346,25 @@ class FakeDuelServer implements WsTransport {
 
   @override
   void send(String data) {
+    final raw = decodeFrame(data);
     final msg = ClientMsg.decode(data);
-    if (msg == null) return;
+    if (msg == null || raw == null) return;
     received.add(msg);
+    frames.add(raw);
     switch (msg) {
       case HelloMsg():
         clientName = msg.name;
         emit(const WelcomeMsg(version: protocolVersion));
       case CreateRoomMsg():
-        emit(RoomMsg(code: code, slot: slot, names: [clientName, null]));
+        // The creator's choice of game, which the room is then played with.
+        final n = raw['n'];
+        if (n is int && n >= minBallCount && n <= maxBallCount) ballCount = n;
+        emitWithBalls(
+          RoomMsg(code: code, slot: slot, names: [clientName, null]),
+        );
       case JoinRoomMsg():
         code = msg.code;
-        emit(RoomMsg(code: code, slot: slot, names: names()));
+        emitWithBalls(RoomMsg(code: code, slot: slot, names: names()));
       case PingMsg():
         emit(PongMsg(clientMs: msg.clientMs, tick: -1));
       case RematchMsg():
@@ -1352,7 +1381,20 @@ class FakeDuelServer implements WsTransport {
     if (!_out.isClosed) _out.add(encodeMsg(msg));
   }
 
+  /// [msg] plus the room's `n`, the way a v2 server answers (SPEC 3). The core's
+  /// `RoomMsg` / `StartMsg` have no field for the ball count yet, so it is added
+  /// to the frame itself — which is what the client reads it off.
+  void emitWithBalls(ServerMsg msg) {
+    if (!_out.isClosed) {
+      _out.add(jsonEncode(<String, dynamic>{...msg.toJson(), 'n': ballCount}));
+    }
+  }
+
   void start({int seed = 424242, int countdown = 6}) =>
+      emitWithBalls(StartMsg(seed: seed, countdown: countdown, names: names()));
+
+  /// A `start` from a server that says nothing about ball counts.
+  void startWithoutBalls({int seed = 424242, int countdown = 6}) =>
       emit(StartMsg(seed: seed, countdown: countdown, names: names()));
 
   void snap(GameState state, {List<GameEvent> events = const []}) =>

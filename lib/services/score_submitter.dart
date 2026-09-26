@@ -107,6 +107,13 @@ class ScoreSubmitter {
           canRetryUnderNewName: true,
         );
       }
+      if (r.isUnsupportedVersion) {
+        // Never judged: the server does not read this build's replay format
+        // (SPEC §2.5). Keeping the game is what makes "update Arco to submit
+        // this score" true — after an update the very same run goes up.
+        await _defer(name, replay);
+        return const SubmitRejected(unsupportedVersionError);
+      }
       if (r.shouldRetryLater) {
         await _defer(name, replay);
         return const SubmitDeferred();
@@ -194,6 +201,10 @@ class ScoreSubmitter {
           offensiveNameError,
           canRetryUnderNewName: true,
         );
+      }
+      // Also kept, and for the same reason: no verdict was reached on the run.
+      if (r.isUnsupportedVersion) {
+        return const SubmitRejected(unsupportedVersionError);
       }
       // Cleared only on the server's own verdict; everything else leaves the
       // stored replay alone so it can be retried (SPEC §5.1).

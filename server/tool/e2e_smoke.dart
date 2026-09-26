@@ -14,9 +14,15 @@
 ///       `GET /api/leaderboard`;
 ///   1b. the same replay with `claimedScore + 1` is rejected with
 ///       400 `replay_mismatch` (so replay verification really runs);
+///   1c. a **two-ball** solo game is accepted, filed on the two-ball board and
+///       is on that board only (so the board dimension of §4.6 really exists in
+///       storage and not just in the query string);
 ///   2.  two WebSocket clients create/join a room, get `start`, receive
 ///       snapshots while sending inputs, the server applies those inputs, and
-///       when one leaves the other receives `peer_left`.
+///       when one leaves the other receives `peer_left`;
+///   3.  a room created with two balls carries that count to both players and
+///       the server simulates it (so the duel ball count of §3 survives a real
+///       socket, not just a test harness).
 ///
 /// Prints `PASS`/`FAIL` per step and exits non-zero when any step failed.
 library;
@@ -26,6 +32,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:arco_core/arco_core.dart';
+import 'package:arco_server/arco_server.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 
 const String defaultBaseUrl = 'http://localhost:18100';
@@ -118,9 +125,13 @@ class _Smoke {
         failures++;
       }
       if (!await _run('1b tampered score rejected', _stepTampered)) failures++;
+      if (!await _run('1c two-ball replay on its own board', _stepTwoBall)) {
+        failures++;
+      }
       if (!await _run('2  duel room over two WebSockets', _stepDuel)) {
         failures++;
       }
+      if (!await _run('3  two-ball duel room', _stepTwoBallDuel)) failures++;
     } finally {
       _http.close();
     }
@@ -214,6 +225,13 @@ class _Smoke {
     _expect(id is String && id.isNotEmpty, 'bad id $id');
     stdout.writeln('      201 id=$id score=$score rank=$rank');
 
+    _expect(
+      body['balls'] == 1,
+      'a one-ball run was filed on board ${body['balls']}',
+    );
+
+    // No `balls` parameter: a client that has never heard of boards asks the
+    // question it always asked and must get the classic board (§4.6).
     final list = await _http.get('api/leaderboard', {
       'period': 'all',
       'limit': '100',
@@ -221,6 +239,10 @@ class _Smoke {
     _expect(
       list.status == 200,
       'GET /api/leaderboard returned ${list.status}: ${list.body}',
+    );
+    _expect(
+      list.json['balls'] == 1,
+      'the default board is ${list.json['balls']}, expected 1',
     );
     final entries = (list.json['entries'] as List<dynamic>)
         .cast<Map<String, dynamic>>();
@@ -254,15 +276,45 @@ class _Smoke {
       'seconds=${entry['seconds']} createdAt=$createdAt '
       '(${entries.length} entries)',
     );
+
+    // The same run must not also be on the two-ball board.
+    _expect(
+      !await _isOnBoard(playerName, 2),
+      'the one-ball run shows up on the two-ball board',
+    );
+  }
+
+  /// Whether a leaderboard entry named [name] is on the [balls] board.
+  Future<bool> _isOnBoard(String name, int balls) async {
+    final res = await _http.get('api/leaderboard', {
+      'period': 'all',
+      'limit': '100',
+      'balls': '$balls',
+    });
+    _expect(
+      res.status == 200,
+      'GET /api/leaderboard?balls=$balls returned ${res.status}: ${res.body}',
+    );
+    _expect(
+      res.json['balls'] == balls,
+      'asked for board $balls, got ${res.json['balls']}',
+    );
+    return (res.json['entries'] as List<dynamic>)
+        .cast<Map<String, dynamic>>()
+        .any((e) => e['name'] == name);
   }
 
   /// Plays a full solo game with the core: an aim-at-ball bot for the first
   /// [botSeconds] of sim time, then [ScriptedInput.avoidBall] so the ball
   /// escapes three times and the game reaches [Phase.gameOver]. Every tick's
   /// input is recorded, so the server can re-simulate the game exactly.
-  Replay _recordSoloGame() {
+  Replay _recordSoloGame({int ballCount = minBallCount}) {
     final state = GameState.initial(
-      GameConfig(mode: GameMode.solo, seed: DateTime.now().microsecond + 1),
+      GameConfig(
+        mode: GameMode.solo,
+        seed: DateTime.now().microsecond + 1,
+        ballCount: ballCount,
+      ),
     );
     final log = InputLog();
     final inputs = <PlayerInput>[PlayerInput.none];
@@ -317,6 +369,54 @@ class _Smoke {
     stdout.writeln(
       '      400 error=${body['error']} detail=${body['detail']} '
       '(claimed ${tampered.claimedScore} instead of ${replay.claimedScore})',
+    );
+  }
+
+  // ----------------------------------------------------------------- step 1c
+
+  /// A two-ball solo game is a different board, not a different leaderboard:
+  /// the run is verified the same way and stored beside the classic ones, but
+  /// it appears only where two-ball runs belong (§4.6).
+  Future<void> _stepTwoBall() async {
+    final name = '$playerName-2';
+    final replay = _recordSoloGame(ballCount: 2);
+    _expect(replay.config.ballCount == 2, 'the fixture is not a two-ball run');
+    final local = ReplayVerifier.verify(replay);
+    _expect(local.ok, 'the two-ball replay does not verify locally: $local');
+    stdout.writeln(
+      '      recorded ${replay.finalTick} ticks score=${replay.claimedScore} '
+      'inputs=${replay.inputs[0].length}',
+    );
+
+    final res = await _http.postJson('api/scores', {
+      'name': name,
+      'replay': replay.toJson(),
+    });
+    _expect(
+      res.status == 201,
+      'POST /api/scores (two balls) returned ${res.status}: ${res.body}',
+    );
+    _expect(
+      res.json['balls'] == 2,
+      'a two-ball run was filed on board ${res.json['balls']}',
+    );
+    _expect(
+      res.json['score'] == replay.claimedScore,
+      'server verified ${res.json['score']}, client claimed '
+      '${replay.claimedScore}',
+    );
+    stdout.writeln(
+      '      201 balls=2 score=${res.json['score']} rank=${res.json['rank']}',
+    );
+
+    _expect(
+      await _isOnBoard(name, 2),
+      'the two-ball run is missing from the two-ball board',
+    );
+    _expect(
+      !await _isOnBoard(name, 1),
+      'the two-ball run appears on the classic board, which would make that '
+      'board meaningless',
     );
   }
 
@@ -444,6 +544,75 @@ class _Smoke {
       await b.dispose();
     }
   }
+
+  // ------------------------------------------------------------------- step 3
+
+  /// A duel room the creator asked for two balls in (§3).
+  ///
+  /// Both players have to be told the count — the joiner *before* the countdown
+  /// — and the server has to simulate it, which the snapshots prove: the config
+  /// inside them names two balls and the ball list has two entries.
+  Future<void> _stepTwoBallDuel() async {
+    final a = await _WsClient.connect(base, 'A', '$playerName-A');
+    final b = await _WsClient.connect(base, 'B', '$playerName-B');
+    try {
+      a.sendFrame(jsonEncode({'t': 'create', ballCountField: 2}));
+      final roomA = await a.waitFor<RoomMsg>();
+      _expect(
+        a.frameOf('room')[ballCountField] == 2,
+        'the creator was told ${a.frameOf('room')[ballCountField]} ball(s)',
+      );
+
+      b.send(JoinRoomMsg(code: roomA.code));
+      await b.waitFor<RoomMsg>();
+      _expect(
+        b.frameOf('room')[ballCountField] == 2,
+        'the joiner was told ${b.frameOf('room')[ballCountField]} ball(s) '
+        'before the countdown',
+      );
+
+      final startA = await a.waitFor<StartMsg>();
+      await b.waitFor<StartMsg>();
+      for (final client in [a, b]) {
+        _expect(
+          client.frameOf('start')[ballCountField] == 2,
+          '${client.label}: start says '
+          '${client.frameOf('start')[ballCountField]} ball(s)',
+        );
+      }
+      stdout.writeln('      room ${roomA.code} balls=2 seed=${startA.seed}');
+
+      await _waitUntil(
+        () => a.snapshotCount > 0 && b.snapshotCount > 0,
+        timeout: wsTimeout,
+        what: 'the first snapshot of both clients (countdown is 3 s)',
+      );
+      for (final client in [a, b]) {
+        final state = client.decodeLastSnapshot();
+        _expect(state != null, '${client.label}: no snapshot to inspect');
+        _expect(
+          state!.config.ballCount == 2,
+          '${client.label}: the simulated config has '
+          '${state.config.ballCount} ball(s)',
+        );
+        _expect(
+          state.balls.length == 2,
+          '${client.label}: the snapshot carries ${state.balls.length} ball(s)',
+        );
+      }
+      _expect(
+        a.badFrames.isEmpty && b.badFrames.isEmpty,
+        'unparsable frames: ${a.badFrames}${b.badFrames}',
+      );
+      stdout.writeln(
+        '      both clients simulate two balls '
+        '(snapshots A=${a.snapshotCount} B=${b.snapshotCount})',
+      );
+    } finally {
+      await a.dispose();
+      await b.dispose();
+    }
+  }
 }
 
 Future<void> _waitUntil(
@@ -557,10 +726,28 @@ class _WsClient {
   bool sawOver = false;
 
   Map<String, dynamic>? _lastSnapshot;
+
+  /// The newest raw frame of each type, by `t`. Kept because a frame may carry
+  /// fields the shared parser does not model yet — the duel ball count is one
+  /// (§3) — and this tool exists to check what actually crosses the socket.
+  final Map<String, Map<String, dynamic>> lastFrames =
+      <String, Map<String, dynamic>>{};
+
   bool _done = false;
   Object? _error;
 
   void send(ClientMsg msg) => _channel.sink.add(encodeMsg(msg));
+
+  /// Sends a frame this tool built itself, for a field the shared classes do
+  /// not carry yet.
+  void sendFrame(String frame) => _channel.sink.add(frame);
+
+  /// The newest frame of type [t], as raw JSON.
+  Map<String, dynamic> frameOf(String t) {
+    final frame = lastFrames[t];
+    _expect(frame != null, '$label: never received a "$t" frame');
+    return frame!;
+  }
 
   GameState? decodeLastSnapshot() {
     final snapshot = _lastSnapshot;
@@ -602,6 +789,11 @@ class _WsClient {
   }
 
   void _onFrame(Object? frame) {
+    if (frame is String) {
+      final json = decodeFrame(frame);
+      final type = json?['t'];
+      if (json != null && type is String) lastFrames[type] = json;
+    }
     final msg = frame is String ? ServerMsg.decode(frame) : null;
     if (msg == null) {
       badFrames.add('$frame');

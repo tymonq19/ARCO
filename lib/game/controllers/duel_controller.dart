@@ -100,6 +100,15 @@ class DuelController extends ChangeNotifier {
   String get ownName => names[slot];
   String get opponentName => names[1 - slot];
 
+  /// Balls this room plays with (SPEC §2.3).
+  ///
+  /// The creator picks it, the server puts it in `room` and `start`, and both
+  /// clients build the same `GameConfig` from it — a prediction with the wrong
+  /// ball count would disagree with the server on every tick between snapshots.
+  /// A live match answers from its own config, which is the authoritative one:
+  /// `GameState.fromJson` refuses a snapshot whose ball list disagrees with its
+  /// config, so what the state says is what the server is simulating.
+  int get ballCount => _state?.config.ballCount ?? client.roomBallCount;
   bool get hasMatch => _state != null;
   bool get inCountdown => _countdownTicksLeft > 0;
   int get countdownSeconds => (_countdownTicksLeft / tickRate).ceil();
@@ -125,10 +134,14 @@ class DuelController extends ChangeNotifier {
   // ------------------------------------------------------------------ commands
 
   /// Connects and asks the server for a fresh room code.
-  Future<void> createRoom(String name) async {
+  ///
+  /// [ballCount] is the creator's choice of game (SPEC §2.3); it travels with the
+  /// `create` frame and comes back to both clients on `room` and `start`, so the
+  /// joiner is told what they have walked into before the first serve.
+  Future<void> createRoom(String name, {int ballCount = minBallCount}) async {
     _error = null;
     await client.connect(name);
-    client.createRoom();
+    client.createRoom(ballCount: ballCount);
   }
 
   /// Connects and joins [code].
@@ -197,7 +210,7 @@ class DuelController extends ChangeNotifier {
       _stepLocal(s);
     }
     if (steps >= maxCatchUpSteps && _accumulator > dt) _accumulator = 0;
-    fx.trackBall(s.ball);
+    fx.trackBalls(s.balls);
     _notifyIfHudChanged();
   }
 
@@ -262,7 +275,15 @@ class DuelController extends ChangeNotifier {
 
   void _beginMatch(StartMsg msg) {
     _state = GameState.initial(
-      GameConfig(mode: GameMode.duel, seed: msg.seed & 0xFFFFFFFF),
+      GameConfig(
+        mode: GameMode.duel,
+        seed: msg.seed & 0xFFFFFFFF,
+        // The room's count, as the server reported it. The local prediction has
+        // to run the same game the server is running, or the two disagree on
+        // every tick between snapshots; a server that says nothing means one
+        // ball, which is what every build before ball counts played.
+        ballCount: client.roomBallCount,
+      ),
     );
     _countdownTicksLeft = msg.countdown;
     _countdownSecond = -1;
@@ -288,7 +309,18 @@ class DuelController extends ChangeNotifier {
 
   void _applySnapshot(SnapMsg msg) {
     final local = _state;
-    final next = GameState.fromJson(msg.state);
+    final GameState next;
+    try {
+      next = GameState.fromJson(msg.state);
+    } on FormatException catch (e) {
+      // A snapshot the core refuses to decode — a ball list that disagrees with
+      // its own config, an unknown mode, a ball count this build cannot simulate
+      // (SPEC §2.5). Dropping it and carrying on with the prediction is the only
+      // safe answer: a half-applied state would be a different game from the
+      // server's, and the next snapshot arrives in 3 ticks.
+      debugPrint('DuelController: unusable snapshot at tick ${msg.tick}: $e');
+      return;
+    }
     if (local != null &&
         slot < local.players.length &&
         slot < next.players.length) {

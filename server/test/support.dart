@@ -159,6 +159,13 @@ class TestClient {
 
   /// Parsed [ServerMsg]s, or the raw frame when it could not be parsed.
   final List<Object> _inbox = <Object>[];
+
+  /// Every text frame the server sent, decoded as JSON and in arrival order.
+  ///
+  /// Kept alongside the parsed inbox because a frame may carry fields core's
+  /// `ServerMsg.parse` does not model yet — the duel ball count (SPEC §3) is
+  /// one — and a test that asserts on such a field has to see the frame itself.
+  final List<Map<String, dynamic>> jsonFrames = <Map<String, dynamic>>[];
   final List<Completer<Object>> _waiters = <Completer<Object>>[];
   final Completer<void> _closed = Completer<void>();
   bool _done = false;
@@ -173,6 +180,24 @@ class TestClient {
   void sendRaw(Object frame) => channel.sink.add(frame);
 
   void send(ClientMsg msg) => sendRaw(encodeMsg(msg));
+
+  /// The newest frame of type [t] the server has sent, as raw JSON.
+  Map<String, dynamic> jsonOf(String t) {
+    for (final frame in jsonFrames.reversed) {
+      if (frame['t'] == t) return frame;
+    }
+    fail(
+      'no "$t" frame received (got ${[for (final f in jsonFrames) f['t']]})',
+    );
+  }
+
+  /// Sends `create`, optionally asking for [balls] balls (SPEC §3).
+  ///
+  /// Written as a raw frame because the ball count travels in a field core's
+  /// [CreateRoomMsg] does not carry yet; omitting [balls] sends exactly the
+  /// frame [CreateRoomMsg] encodes.
+  void createRoom({int? balls}) =>
+      sendRaw(jsonEncode({'t': 'create', ballCountField: ?balls}));
 
   Future<void> hello(String name, {int version = protocolVersion}) async {
     send(HelloMsg(version: version, name: name));
@@ -215,6 +240,9 @@ class TestClient {
   }
 
   void _deliver(Object? frame) {
+    if (frame is String) {
+      jsonFrames.addAll([?decodeFrame(frame)]);
+    }
     final Object item =
         (frame is String ? ServerMsg.decode(frame) : null) ?? '$frame';
     if (_waiters.isNotEmpty) {
@@ -261,9 +289,12 @@ class TestClient {
 /// i.e. the paddle never moves, so the game ends in a few hundred ticks).
 Replay recordSoloReplay({
   int seed = 20260923,
+  int ballCount = minBallCount,
   PlayerInput Function(GameState state)? controller,
 }) {
-  final state = GameState.initial(GameConfig(mode: GameMode.solo, seed: seed));
+  final state = GameState.initial(
+    GameConfig(mode: GameMode.solo, seed: seed, ballCount: ballCount),
+  );
   final log = InputLog();
   final inputs = <PlayerInput>[PlayerInput.none];
   while (state.phase != Phase.gameOver &&
@@ -285,22 +316,50 @@ Replay recordSoloReplay({
 ///
 /// [recordSoloReplay] leaves the paddle still, which ends the game in a few
 /// hundred ticks for a score under 20 — below the earning threshold, so it can
-/// never pay a token. This plays properly instead: the paddle chases the ball,
-/// but from where the ball was [reactionTicks] ticks ago, which is what makes it
-/// eventually lose. Measured with the defaults: ~4 240 ticks (71 s) and a
-/// verified score of 2 218, in a 35 KB body — a realistic good run, well inside
-/// the 2 MB submission cap.
+/// never pay a token. This plays properly instead: the paddle chases the ball
+/// that is nearest the rim, but from where that ball was [reactionTicks] ticks
+/// ago, which is what makes it eventually lose. Measured with the defaults:
+/// ~4 240 ticks (71 s) and a verified score of 2 218, in a 35 KB body — a
+/// realistic good run, well inside the 2 MB submission cap.
 ///
 /// A smaller [reactionTicks] plays better and scores more; below about 14 the
-/// paddle stops losing at all and the game runs into `ReplayVerifier.maxTicks`
-/// with an input log too large to submit, which is itself worth knowing.
-Replay recordScoringSoloReplay({int seed = 20260923, int reactionTicks = 16}) {
+/// one-ball paddle stops losing at all and the game runs into
+/// `ReplayVerifier.maxTicks` with an input log too large to submit, which is
+/// itself worth knowing.
+///
+/// With [ballCount] 2 the same paddle has two balls to meet and loses much
+/// sooner, so the default reaction is shorter there: 12 ticks, which measures at
+/// ~1 900 ticks and a verified score around 2 900 — a real two-ball run that
+/// earns real Sparks, which is what the board and the wallet tests need.
+Replay recordScoringSoloReplay({
+  int seed = 20260923,
+  int ballCount = minBallCount,
+  int? reactionTicks,
+}) {
+  final reaction = reactionTicks ?? (ballCount > 1 ? 12 : 16);
   final history = <double>[];
   return recordSoloReplay(
     seed: seed,
+    ballCount: ballCount,
     controller: (state) {
-      history.add(DetMath.atan2(state.ball.y, state.ball.x));
-      final index = history.length - 1 - reactionTicks;
+      // The ball closest to escaping is the one that has to be met; with one
+      // ball this is exactly "chase the ball".
+      Ball? target;
+      var furthest = -1.0;
+      for (final ball in state.balls) {
+        if (!ball.active) continue;
+        final r = ball.x * ball.x + ball.y * ball.y;
+        if (r > furthest) {
+          furthest = r;
+          target = ball;
+        }
+      }
+      history.add(
+        target == null
+            ? (history.isEmpty ? 0.0 : history.last)
+            : DetMath.atan2(target.y, target.x),
+      );
+      final index = history.length - 1 - reaction;
       return PlayerInput.aimAngle(history[index < 0 ? 0 : index]);
     },
   );

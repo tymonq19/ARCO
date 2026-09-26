@@ -86,9 +86,12 @@ Future<void> playFor(WidgetTester tester, Duration duration) async {
     while (frames < maxFrames && clock.now().isBefore(end)) {
       final state = tester.widget<GameView>(view).stateOf();
       var deflection = 0.0;
-      if (state != null && state.ball.active && state.players.isNotEmpty) {
+      // The first ball: a game can have two (SPEC 2.3), and a bot that has to
+      // pick one picks the one the simulation resolves first.
+      final ball = state?.balls.first;
+      if (ball != null && ball.active && state!.players.isNotEmpty) {
         final error = angleDelta(
-          math.atan2(state.ball.y, state.ball.x),
+          math.atan2(ball.y, ball.x),
           state.players.first.paddle.angle,
         );
         deflection = (error / 0.25).clamp(-1.0, 1.0) * JoystickInput.maxOffset;

@@ -333,7 +333,7 @@ GameState _buildBallPose() {
   );
   state.phase = Phase.playing;
   state.serveTimer = 0;
-  state.ball
+  state.balls[0]
     ..active = true
     ..x = 0
     ..y = 0
@@ -354,7 +354,7 @@ GameState _buildPaddlePose() {
   state.serveTimer = 0;
   // No ball: the painter draws none and the wake stays empty, so the card shows
   // the paddle at rest, which is how it is seen almost all of the time.
-  state.ball.active = false;
+  state.balls[0].active = false;
   state.players[0].paddle.angle = bottomCenterAngle;
   return state;
 }
@@ -367,7 +367,7 @@ FxState _buildBallFx(GameState state) {
   // Far enough in that every spark of an ember's shower has a point of the path
   // to have been shed from. The counter is what anchors them (see FxState).
   fx.frames = 600;
-  final ball = state.ball;
+  final ball = state.balls[0];
   final x = ball.x;
   final y = ball.y;
   // Walk the ball back along its velocity and feed the trail forwards, which is

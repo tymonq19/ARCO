@@ -59,6 +59,11 @@ class SoloController extends ChangeNotifier {
   bool get running => _started && !_paused && !gameOver;
 
   Player get player => _state.players[0];
+
+  /// Balls this game is being played with (SPEC §2.3). Fixed for the life of the
+  /// game: it is in the config, and therefore in the replay.
+  int get ballCount => _state.config.ballCount;
+
   int get score => player.score;
   int get lives => player.lives;
   int get multiplier => player.multiplier;
@@ -96,6 +101,23 @@ class SoloController extends ChangeNotifier {
 
   void togglePause() => _paused ? resume() : pause();
 
+  /// Rebuilds the game with [count] balls and remembers the choice.
+  ///
+  /// Only before the first serve, and that is deliberate: the count is part of
+  /// `GameConfig`, so it is part of the replay the server re-simulates, and a run
+  /// whose ball count changed halfway through could not be verified at all. The
+  /// start overlay is therefore the last moment it can be offered — which is also
+  /// the moment it is clearest that this is the game about to be played and not a
+  /// preference. Returns true when the game was rebuilt.
+  bool setBallCount(int count) {
+    final wanted = count.clamp(minBallCount, maxBallCount);
+    if (_started || gameOver || wanted == ballCount) return false;
+    settings.ballCount = wanted;
+    _reset(_seedSource());
+    notifyListeners();
+    return true;
+  }
+
   /// Fresh game: new seed, new input log, cleared effects.
   void retry() {
     _reset(_seedSource());
@@ -120,7 +142,7 @@ class SoloController extends ChangeNotifier {
         _accumulator = 0;
       }
     }
-    fx.trackBall(_state.ball, smooth: false);
+    fx.trackBalls(_state.balls, smooth: false);
     _notifyIfHudChanged();
   }
 
@@ -160,7 +182,12 @@ class SoloController extends ChangeNotifier {
   void _finish() {
     audio.play(Sfx.gameover);
     input.reset();
-    _newBest = settings.recordScore(score);
+    // One record per board (SPEC §4.6): a two-ball run is a different game, so
+    // it beats — and is beaten by — only other two-ball runs. The game is
+    // recorded as played either way, which is what stops the leaderboard from
+    // opening a player on a board they have never been on.
+    _newBest = settings.recordScore(score, balls: ballCount);
+    settings.notePlayed(ballCount);
     _replay = Replay(
       config: _state.config,
       inputs: <InputLog>[_log],
@@ -171,7 +198,15 @@ class SoloController extends ChangeNotifier {
 
   void _reset(int seed) {
     _state = GameState.initial(
-      GameConfig(mode: GameMode.solo, seed: seed & 0xFFFFFFFF),
+      GameConfig(
+        mode: GameMode.solo,
+        seed: seed & 0xFFFFFFFF,
+        // Taken from the setting at the moment the game is built, and then
+        // frozen: it is part of the config, so it is part of the replay the
+        // server re-simulates, and a run whose ball count changed halfway
+        // through could not be verified at all.
+        ballCount: settings.ballCount,
+      ),
     );
     _log = InputLog();
     _inputs[0] = PlayerInput.none;

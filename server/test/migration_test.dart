@@ -451,6 +451,28 @@ void writeV6Database(String path, {required String secretHash}) {
   db.close();
 }
 
+/// The schema exactly as version 7 left it — **the one deployed today**: the
+/// purchase ledger under its current name, and a `scores` table with no `balls`
+/// column, because until v8 there was only ever one ball.
+///
+/// This is the file v8 has to upgrade without losing a row, and the rows in it
+/// are the interesting part: two verified runs that nobody ever asked what ball
+/// count they were played with, because there was nothing to ask.
+void writeV7Database(String path, {required String secretHash}) {
+  writeV6Database(path, secretHash: secretHash);
+  final db = sqlite3.open(path);
+  db.execute('ALTER TABLE spark_purchases RENAME TO purchases');
+  db.execute('DROP INDEX IF EXISTS idx_spark_purchases_player');
+  db.execute(
+    'CREATE INDEX idx_purchases_player ON purchases (player_id, credited_at DESC)',
+  );
+  db.execute('PRAGMA user_version = 7');
+  // The point of this file: no board column anywhere, and no board index.
+  expect(columnNames(db, 'scores'), isNot(contains('balls')));
+  expect(indexNames(db, 'scores'), isNot(contains('idx_scores_balls')));
+  db.close();
+}
+
 List<String> columnNames(Database db, String table) => [
   for (final row in db.select('PRAGMA table_info($table)'))
     row['name'] as String,
@@ -913,7 +935,8 @@ void main() {
           'token_awards',
         ]),
       );
-      // The existing tables are untouched — not one column added or dropped.
+      // The existing tables keep every column they had. `balls` is the one v8
+      // adds (SPEC §4.6); nothing was dropped and nothing was rewritten.
       expect(columnNames(raw, 'scores'), <String>[
         'id',
         'name',
@@ -925,6 +948,7 @@ void main() {
         'hash',
         'player_id',
         'country',
+        'balls',
       ]);
       expect(columnNames(raw, 'players'), <String>[
         'id',
@@ -1523,6 +1547,146 @@ void main() {
       expect(
         columnNames(raw, 'player_wallets').toSet(),
         columnNames(rawFresh, 'player_wallets').toSet(),
+      );
+    });
+  });
+
+  // --------------------------------------------- v7 → v8: the board column
+
+  /// The upgrade a live deployment is about to take (SPEC §4.3, §4.6): the
+  /// leaderboard grows a board dimension, and the rows already in it have to end
+  /// up on the board they were actually played on — the one-ball board, because
+  /// until now that was the only game there was.
+  group('a version 7 database', () {
+    const playerId = 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
+    const secret = 'a-secret-issued-under-schema-v3';
+
+    test('gains the board column and puts every old row on board one', () {
+      writeV7Database(path, secretHash: hashPlayerSecret(secret));
+
+      final db = Db.open(path);
+      addTearDown(db.close);
+
+      expect(
+        db.count,
+        2,
+        reason: 'a column added with a default drops nothing',
+      );
+      // Every stored row is a one-ball run, which is the truth about it rather
+      // than a guess: two balls could not be played before this version.
+      expect(db.countOnBoard(1), 2);
+      expect(db.countOnBoard(2), 0);
+      final rows = db.topScores();
+      expect([for (final r in rows) r.id], ['v3-owned', 'v3-anonymous']);
+      expect([for (final r in rows) r.balls], [1, 1]);
+      expect(rows.first.score, 820);
+      expect(rows.first.playerId, playerId);
+      expect(rows.first.country, 'PL');
+      expect(
+        rows.last.playerId,
+        isNull,
+        reason: 'an anonymous legacy row stays anonymous',
+      );
+      expect(
+        db.rank(500),
+        2,
+        reason: 'the legacy rows still count for rank on the board they are on',
+      );
+      expect(db.topScores(country: 'PL'), hasLength(1));
+      expect(
+        db.topScores(balls: 2),
+        isEmpty,
+        reason: 'nothing was invented on the two-ball board',
+      );
+    });
+
+    test('a migrated file takes runs on both boards and keeps them apart', () {
+      writeV7Database(path, secretHash: hashPlayerSecret(secret));
+      final db = Db.open(path);
+      addTearDown(db.close);
+
+      db.insertScore(
+        ScoreRow(
+          id: 'two-ball-run',
+          name: 'Duo',
+          score: 400,
+          ticks: 2400,
+          seed: 5,
+          createdAt: Db.formatTimestamp(DateTime.utc(2026, 9, 26, 10)),
+          ipHash: 'ip-hash-2',
+          hash: 9,
+          playerId: playerId,
+          country: 'PL',
+          balls: 2,
+        ),
+      );
+
+      expect(
+        [for (final r in db.topScores(balls: 1)) r.id],
+        ['v3-owned', 'v3-anonymous'],
+      );
+      expect([for (final r in db.topScores(balls: 2)) r.id], ['two-ball-run']);
+      // 400 is behind 820 on board one and ahead of nothing on board two, so
+      // the same number is two different ranks — which is the whole point.
+      expect(db.rank(400, balls: 1), 2);
+      expect(db.rank(400, balls: 2), 1);
+      final boards = db.playerBoards(playerId);
+      expect([for (final b in boards) b.balls], [1, 2]);
+      expect([for (final b in boards) b.bestScore], [820, 400]);
+      expect([for (final b in boards) b.rank], [1, 1]);
+    });
+
+    test('the leaderboard keeps serving the old rows over HTTP', () async {
+      writeV7Database(path, secretHash: hashPlayerSecret(secret));
+      final server = await bootServer(dbPath: path);
+      Future<Map<String, dynamic>> get(String p) async {
+        final r = await http.get(Uri.parse('${server.baseUrl}$p'));
+        expect(r.statusCode, 200, reason: r.body);
+        return jsonDecode(r.body) as Map<String, dynamic>;
+      }
+
+      // A client that has never heard of boards asks the question it always
+      // asked and gets every row it always got.
+      final legacy = await get('/api/leaderboard');
+      expect(legacy['balls'], 1);
+      expect(
+        [for (final e in legacy['entries'] as List<dynamic>) e['name']],
+        ['Regular', 'Passer-by'],
+      );
+      // And naming the board explicitly is the same answer.
+      final explicit = await get('/api/leaderboard?balls=1');
+      expect(explicit, legacy);
+      expect((await get('/api/leaderboard?balls=2'))['entries'], isEmpty);
+      expect((await get('/api/leaderboard/rank?score=500'))['rank'], 2);
+      expect(
+        (await get('/api/leaderboard/rank?score=500&balls=2'))['rank'],
+        1,
+        reason: 'the two-ball board is empty, so any score leads it',
+      );
+    });
+
+    test('the upgraded v7 file matches a fresh database exactly', () {
+      writeV7Database(path, secretHash: hashPlayerSecret(secret));
+      final upgraded = Db.open(path);
+      addTearDown(upgraded.close);
+      final freshPath = '${dir.path}/fresh-v8.db';
+      final fresh = Db.open(freshPath);
+      addTearDown(fresh.close);
+
+      final raw = sqlite3.open(path);
+      addTearDown(raw.close);
+      final rawFresh = sqlite3.open(freshPath);
+      addTearDown(rawFresh.close);
+      expect(tableNames(raw), tableNames(rawFresh));
+      expect(columnNames(raw, 'scores'), columnNames(rawFresh, 'scores'));
+      expect(indexNames(raw, 'scores'), indexNames(rawFresh, 'scores'));
+      expect(
+        indexNames(raw, 'scores'),
+        containsAll(<String>['idx_scores_balls', 'idx_scores_balls_country']),
+      );
+      expect(
+        raw.select('PRAGMA user_version').first.columnAt(0),
+        Db.schemaVersion,
       );
     });
   });

@@ -537,9 +537,12 @@ void main() {
 /// has been parsed.
 String _maximalScoreBody() {
   final tail = ']],"ft":${ReplayVerifier.maxTicks + 1},"sc":0}';
-  final buffer = StringBuffer('{"name":"Flooder","replay":{"v":1,"cfg":')
-    ..write(jsonEncode(const GameConfig(mode: GameMode.solo, seed: 7).toJson()))
-    ..write(',"in":[[');
+  final buffer =
+      StringBuffer('{"name":"Flooder","replay":{"v":${Replay.version},"cfg":')
+        ..write(
+          jsonEncode(const GameConfig(mode: GameMode.solo, seed: 7).toJson()),
+        )
+        ..write(',"in":[[');
   var tick = 0;
   while (buffer.length + tail.length + 32 < maxScoreBodyBytes) {
     if (tick > 0) buffer.write(',');

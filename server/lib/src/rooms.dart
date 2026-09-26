@@ -339,7 +339,11 @@ class RoomRegistry {
 
   /// Handles `create`: leaves the current room if any, enforces caps, seats
   /// the player in slot 0 and replies with `room`.
-  void create(ClientSession session) {
+  ///
+  /// [ballCount] is the creator's choice of how many balls every game in this
+  /// room is played with (SPEC §3); it is fixed for the room's life and is
+  /// reported in the `room` message both players receive.
+  void create(ClientSession session, {int ballCount = minBallCount}) {
     // Caps are checked before the caller's current room is torn down, so a
     // refused create leaves the client exactly where it was.
     if (_rooms.length >= maxRooms) {
@@ -355,12 +359,13 @@ class RoomRegistry {
     }
     if (session.room != null) leave(session);
     final now = _clock();
-    final room = Room(generateCode(), now: now);
+    final room = Room(generateCode(), now: now, ballCount: ballCount);
     _rooms[room.code] = room;
     room.addPlayer(session, now);
     room.broadcastRoomInfo();
     log.info(
-      'room ${room.code} created by ${session.name} (${_rooms.length} rooms)',
+      'room ${room.code} created by ${session.name} with $ballCount ball(s) '
+      '(${_rooms.length} rooms)',
     );
   }
 

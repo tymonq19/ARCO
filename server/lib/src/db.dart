@@ -6,9 +6,10 @@
 ///
 /// Schema (SPEC §4.3): `scores(id TEXT PK, name TEXT, score INT, ticks INT,
 /// seed INT, created_at TEXT ISO-8601 UTC, ip_hash TEXT, hash INT,
-/// player_id TEXT NULL, country TEXT NULL)` with indexes on
-/// `(score DESC, created_at)`, `(player_id, score DESC, created_at)` and
-/// `(country, score DESC, created_at)`, plus `players` and `player_secrets`
+/// player_id TEXT NULL, country TEXT NULL, balls INT NOT NULL DEFAULT 1)` with
+/// indexes on `(score DESC, created_at)`, `(player_id, score DESC, created_at)`,
+/// `(country, score DESC, created_at)`, `(balls, score DESC, created_at)` and
+/// `(balls, country, score DESC, created_at)`, plus `players` and `player_secrets`
 /// (SPEC §4.4), `id_token_uses` (SPEC §4.5) and the cosmetic tables
 /// `player_wallets`, `player_items`, `player_equipped` and `token_awards`
 /// (SPEC §4.8), `purchases` (SPEC §4.9) and `ad_rewards` (SPEC §4.10).
@@ -71,6 +72,7 @@ class ScoreRow {
     required this.hash,
     this.playerId,
     this.country,
+    this.balls = 1,
   });
 
   final String id;
@@ -94,6 +96,23 @@ class ScoreRow {
   /// something that was not a country code, which is dropped rather than
   /// refused. Every row stored before national ranking existed is null.
   final String? country;
+
+  /// Balls the run was played with — the board it belongs to (SPEC §4.3,
+  /// §4.6). Two balls score at a different rate, so one board holding both
+  /// would make the one-ball board meaningless; every query therefore names a
+  /// ball count.
+  ///
+  /// Unlike [country], this is never unknown. A row stored before ball counts
+  /// existed was played with one ball, because that was the only game there
+  /// was — so the column is `NOT NULL DEFAULT 1` and every legacy row reads 1,
+  /// which is the truth about it rather than a backfill.
+  ///
+  /// The default here, and on every query below, is written as a literal `1`
+  /// rather than `minBallCount`: this layer is storage and stays free of the
+  /// simulation package, and the SQL default it has to agree with is a literal
+  /// too. The range is enforced where a ball count enters the server — by
+  /// `GameConfig` when a replay is decoded, and by `parseBallCount` on a query.
+  final int balls;
 }
 
 /// One row of `players` (SPEC §4.4).
@@ -159,6 +178,7 @@ class StoredPlayer {
 class PlayerStats {
   const PlayerStats({
     required this.games,
+    this.balls = 1,
     this.bestScore,
     this.rank,
     this.country,
@@ -166,8 +186,13 @@ class PlayerStats {
     this.countryRank,
   });
 
-  /// Number of stored scores owned by the player.
+  /// Number of stored scores owned by the player **on this board**.
   final int games;
+
+  /// The board these numbers are about: the ball count the runs were played
+  /// with (SPEC §4.3, §4.6). Every rank is a position on one board, because a
+  /// rank across both would be a position in a race nobody ran.
+  final int balls;
   final int? bestScore;
   final int? rank;
 
@@ -1090,31 +1115,39 @@ class Db {
     : _insert = _db.prepare(
         'INSERT INTO scores '
         '(id, name, score, ticks, seed, created_at, ip_hash, hash, player_id, '
-        ' country) '
-        'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+        ' country, balls) '
+        'VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
       ),
+      // Every board query names a ball count (SPEC §4.6): `balls = ?` leads so
+      // that idx_scores_balls hands back one board's slice already ordered by
+      // score, leaving the period bound as a residual test rather than a sort.
+      // There is deliberately no statement that spans ball counts — a board
+      // mixing them would rank runs that were not playing the same game.
       _top = _db.prepare(
         'SELECT id, name, score, ticks, seed, created_at, ip_hash, hash, '
-        'player_id, country FROM scores '
-        'WHERE created_at >= ? ORDER BY score DESC, created_at ASC LIMIT ?',
+        'player_id, country, balls FROM scores '
+        'WHERE balls = ? AND created_at >= ? '
+        'ORDER BY score DESC, created_at ASC LIMIT ?',
       ),
-      // The national board (SPEC §4.6). `country = ?` comes first so that
-      // idx_scores_country hands back one country's slice already ordered by
-      // score, leaving the period bound as a residual test rather than a sort.
+      // The national board (SPEC §4.6), inside one ball count.
       _topInCountry = _db.prepare(
         'SELECT id, name, score, ticks, seed, created_at, ip_hash, hash, '
-        'player_id, country FROM scores '
-        'WHERE country = ? AND created_at >= ? '
+        'player_id, country, balls FROM scores '
+        'WHERE balls = ? AND country = ? AND created_at >= ? '
         'ORDER BY score DESC, created_at ASC LIMIT ?',
       ),
       _rank = _db.prepare(
-        'SELECT COUNT(*) AS c FROM scores WHERE score > ? AND created_at >= ?',
+        'SELECT COUNT(*) AS c FROM scores '
+        'WHERE balls = ? AND score > ? AND created_at >= ?',
       ),
       _rankInCountry = _db.prepare(
         'SELECT COUNT(*) AS c FROM scores '
-        'WHERE country = ? AND score > ? AND created_at >= ?',
+        'WHERE balls = ? AND country = ? AND score > ? AND created_at >= ?',
       ),
       _count = _db.prepare('SELECT COUNT(*) AS c FROM scores'),
+      _countOnBoard = _db.prepare(
+        'SELECT COUNT(*) AS c FROM scores WHERE balls = ?',
+      ),
       _insertPlayer = _db.prepare(
         'INSERT INTO players (id, created_at, last_seen_at, name) '
         'VALUES (?, ?, ?, ?)',
@@ -1145,15 +1178,18 @@ class Db {
       ),
       // Served entirely by idx_scores_player: the count is an index scan of
       // one player's slice and the best score is its first entry.
-      _playerScores = _db.prepare(
-        'SELECT COUNT(*) AS c, MAX(score) AS best FROM scores '
-        'WHERE player_id = ?',
+      // One row per board the player has runs on, which is why it groups
+      // rather than filters: a player with one-ball and two-ball runs gets both
+      // in one statement, and a player with neither gets no rows at all.
+      _playerBoards = _db.prepare(
+        'SELECT balls, COUNT(*) AS c, MAX(score) AS best FROM scores '
+        'WHERE player_id = ? GROUP BY balls ORDER BY balls',
       ),
       // The same, restricted to the player's country (SPEC §4.6): a residual
       // test over that same one-player slice, which is tens of rows.
       _playerScoresInCountry = _db.prepare(
         'SELECT COUNT(*) AS c, MAX(score) AS best FROM scores '
-        'WHERE player_id = ? AND country = ?',
+        'WHERE player_id = ? AND balls = ? AND country = ?',
       ),
       // A player's country is the one their newest run carried, exactly as the
       // display name is the one their newest run used (SPEC §4.4). Runs without
@@ -1521,7 +1557,7 @@ class Db {
   /// 0 is both an empty file and every database written before player
   /// identity existed (`user_version` was never set, so it reads as 0);
   /// [migrate] brings either to [schemaVersion].
-  static const int schemaVersion = 7;
+  static const int schemaVersion = 8;
 
   /// Oldest SQLite that can run [migrate]: `ALTER TABLE … DROP COLUMN` is
   /// 3.35.0 (2021-03). Debian bookworm, which the image is built on, ships
@@ -1583,6 +1619,7 @@ class Db {
       if (version < 5) _migrateToV5(db);
       if (version < 6) _migrateToV6(db);
       if (version < 7) _migrateToV7(db);
+      if (version < 8) _migrateToV8(db);
       db.execute('PRAGMA user_version = $schemaVersion');
       db.execute('COMMIT');
     } catch (_) {
@@ -1991,6 +2028,44 @@ class Db {
     );
   }
 
+  /// v7 → v8 (SPEC §4.3, §4.6): `scores.balls` — which board a run belongs to —
+  /// and the two indexes that make a board a prefix scan.
+  ///
+  /// **One column, `NOT NULL DEFAULT 1`, and nothing else changes shape.** Every
+  /// existing row therefore reads `balls = 1`, and that is not a backfill: until
+  /// this version the simulation had exactly one ball, so every run that was ever
+  /// stored *was* a one-ball run. This is the one place where a new column may
+  /// honestly claim a value for old rows — unlike `country` (v3), which was
+  /// genuinely unknown and stayed NULL. The consequence that matters is that no
+  /// row disappears: the one-ball board after the upgrade is the whole
+  /// leaderboard as it was, in the same order, and a client that never asks for a
+  /// board still gets that one (§4.6).
+  ///
+  /// Two indexes rather than one, mirroring the pair that already exists for the
+  /// global and the national board: `(balls, score DESC, created_at)` answers one
+  /// board's top 100 without a sort, and `(balls, country, score DESC,
+  /// created_at)` does the same inside one country. The older
+  /// `(country, score DESC, created_at)` is kept — it is still the index behind
+  /// "this player's country" and behind any country query that does not name a
+  /// board — and `(score DESC, created_at)` is kept because it is the only index
+  /// that orders the whole table, which `count` and the ad-hoc queries an
+  /// operator runs still want.
+  static void _migrateToV8(Database db) {
+    if (!_hasColumn(db, 'scores', 'balls')) {
+      db.execute(
+        'ALTER TABLE scores ADD COLUMN balls INTEGER NOT NULL DEFAULT 1',
+      );
+    }
+    db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_scores_balls '
+      'ON scores (balls, score DESC, created_at)',
+    );
+    db.execute(
+      'CREATE INDEX IF NOT EXISTS idx_scores_balls_country '
+      'ON scores (balls, country, score DESC, created_at)',
+    );
+  }
+
   static bool _hasTable(Database db, String table) => db.select(
     "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?",
     [table],
@@ -2007,13 +2082,14 @@ class Db {
   final PreparedStatement _rank;
   final PreparedStatement _rankInCountry;
   final PreparedStatement _count;
+  final PreparedStatement _countOnBoard;
   final PreparedStatement _insertPlayer;
   final PreparedStatement _playerById;
   final PreparedStatement _playerBySubject;
   final PreparedStatement _touchPlayer;
   final PreparedStatement _notePlayerScore;
   final PreparedStatement _setLastSeen;
-  final PreparedStatement _playerScores;
+  final PreparedStatement _playerBoards;
   final PreparedStatement _playerScoresInCountry;
   final PreparedStatement _playerCountry;
   final PreparedStatement _playerCount;
@@ -2098,24 +2174,29 @@ class Db {
       row.hash,
       row.playerId,
       row.country,
+      row.balls,
     ]);
   }
 
-  /// Top scores of [period], ordered by score desc then createdAt asc.
+  /// Top scores of one board, ordered by score desc then createdAt asc.
   ///
-  /// [country] restricts the board to one country's runs (SPEC §4.6); it
-  /// composes with [period] rather than replacing it, so "this week in Poland"
-  /// is one query. It must already be a validated code (see `country.dart`).
+  /// [balls] names the board (SPEC §4.6): a run played with two balls is not
+  /// competing with a one-ball run, so there is no query that returns both.
+  /// [country] restricts the board to one country's runs; it composes with
+  /// [period] and [balls] rather than replacing either, so "this week in
+  /// Poland, two balls" is one query. It must already be a validated code
+  /// (see `country.dart`).
   List<ScoreRow> topScores({
     LeaderboardPeriod period = LeaderboardPeriod.all,
     int limit = 100,
     DateTime? now,
     String? country,
+    int balls = 1,
   }) {
     final since = periodLowerBound(period, now);
     final rows = country == null
-        ? _top.select([since, limit])
-        : _topInCountry.select([country, since, limit]);
+        ? _top.select([balls, since, limit])
+        : _topInCountry.select([balls, country, since, limit]);
     return [
       for (final r in rows)
         ScoreRow(
@@ -2129,26 +2210,33 @@ class Db {
           hash: r['hash'] as int,
           playerId: r['player_id'] as String?,
           country: r['country'] as String?,
+          balls: r['balls'] as int,
         ),
     ];
   }
 
-  /// `1 + number of scores > [score]` within [period], and within [country]
-  /// when one is given (SPEC §4.6).
+  /// `1 + number of scores > [score]` on the [balls] board within [period], and
+  /// within [country] when one is given (SPEC §4.6).
   int rank(
     int score, {
     LeaderboardPeriod period = LeaderboardPeriod.all,
     DateTime? now,
     String? country,
+    int balls = 1,
   }) {
     final since = periodLowerBound(period, now);
     final rows = country == null
-        ? _rank.select([score, since])
-        : _rankInCountry.select([country, score, since]);
+        ? _rank.select([balls, score, since])
+        : _rankInCountry.select([balls, country, score, since]);
     return 1 + (rows.first['c'] as int);
   }
 
+  /// Stored scores in total, across every board (diagnostics / tests).
   int get count => _count.select().first['c'] as int;
+
+  /// Stored scores on the [balls] board (diagnostics / tests).
+  int countOnBoard(int balls) =>
+      _countOnBoard.select([balls]).first['c'] as int;
 
   int get playerCount => _playerCount.select().first['c'] as int;
 
@@ -2263,31 +2351,59 @@ class Db {
     _notePlayerScore.execute([name, formatTimestamp(now), id]);
   }
 
-  /// Games submitted, best score and global rank for [playerId], plus the same
-  /// within the player's own country (SPEC §4.6).
-  PlayerStats playerScores(String playerId) {
-    final row = _playerScores.select([playerId]).first;
-    final games = row['c'] as int;
-    if (games == 0) return const PlayerStats(games: 0);
-    final best = row['best'] as int;
+  /// One [PlayerStats] per board [playerId] has runs on, in ball-count order
+  /// (SPEC §4.3, §4.6).
+  ///
+  /// A player who has submitted nothing gets an empty list; a player with
+  /// one-ball runs only gets one entry. Boards are never invented, so an entry
+  /// always carries a real [PlayerStats.bestScore] and a real rank — there is no
+  /// "you are last on a board you never played" row.
+  List<PlayerStats> playerBoards(String playerId) {
     final country = playerCountry(playerId);
-    int? countryBest;
-    int? countryRank;
-    if (country != null) {
-      final national = _playerScoresInCountry.select([playerId, country]).first;
-      if ((national['c'] as int) > 0) {
-        countryBest = national['best'] as int;
-        countryRank = rank(countryBest, country: country);
+    final out = <PlayerStats>[];
+    for (final row in _playerBoards.select([playerId])) {
+      final games = row['c'] as int;
+      if (games == 0) continue;
+      final balls = row['balls'] as int;
+      final best = row['best'] as int;
+      int? countryBest;
+      int? countryRank;
+      if (country != null) {
+        final national = _playerScoresInCountry.select([
+          playerId,
+          balls,
+          country,
+        ]).first;
+        if ((national['c'] as int) > 0) {
+          countryBest = national['best'] as int;
+          countryRank = rank(countryBest, country: country, balls: balls);
+        }
       }
+      out.add(
+        PlayerStats(
+          games: games,
+          balls: balls,
+          bestScore: best,
+          rank: rank(best, balls: balls),
+          country: country,
+          countryBestScore: countryBest,
+          countryRank: countryRank,
+        ),
+      );
     }
-    return PlayerStats(
-      games: games,
-      bestScore: best,
-      rank: rank(best),
-      country: country,
-      countryBestScore: countryBest,
-      countryRank: countryRank,
-    );
+    return out;
+  }
+
+  /// Games submitted, best score and rank for [playerId] on the [balls] board,
+  /// plus the same within the player's own country (SPEC §4.6).
+  ///
+  /// An empty board is `games: 0` with no rank, exactly as a player who has
+  /// submitted nothing at all is.
+  PlayerStats playerScores(String playerId, {int balls = 1}) {
+    for (final board in playerBoards(playerId)) {
+      if (board.balls == balls) return board;
+    }
+    return PlayerStats(games: 0, balls: balls);
   }
 
   /// The country of [playerId]'s most recent run that carried one, or null
@@ -3237,7 +3353,7 @@ class Db {
       _touchPlayer,
       _notePlayerScore,
       _setLastSeen,
-      _playerScores,
+      _playerBoards,
       _playerScoresInCountry,
       _playerCountry,
       _addSecret,

@@ -14,6 +14,7 @@ import '../services/audio_service.dart';
 import '../services/duel_client.dart';
 import '../services/haptics.dart';
 import 'duel_screen.dart';
+import 'widgets/ball_count_selector.dart';
 import 'widgets/code_display.dart';
 import 'widgets/neon_button.dart';
 import 'widgets/neon_panel.dart';
@@ -108,7 +109,13 @@ class _DuelLobbyScreenState extends State<DuelLobbyScreen> {
       _mode = _LobbyMode.create;
     });
     try {
-      await _ensureController().createRoom(name);
+      // The creator's choice of game travels with the room (SPEC §2.3): the
+      // server puts it in `room` and `start`, so the joiner is told before the
+      // first serve and both clients predict the same simulation.
+      await _ensureController().createRoom(
+        name,
+        ballCount: context.read<Settings>().ballCount,
+      );
     } on DuelClientException catch (e) {
       if (!mounted) return;
       setState(() {
@@ -267,9 +274,27 @@ class _DuelLobbyScreenState extends State<DuelLobbyScreen> {
 
   Widget _menuPanel(Strings s) {
     final theme = GameTheme.of(context);
+    final settings = context.watch<Settings>();
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
+        // Directly above CREATE ROOM, because in a duel the count is a property
+        // of the room being created and not of this phone: the creator picks the
+        // game, both players play it, and the joiner is told. Joining uses
+        // whatever the room already is, which is why this sits with the create
+        // button rather than at the top of the screen.
+        NeonPanel(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+          glow: false,
+          child: BallCountSelector(
+            value: settings.ballCount,
+            onChanged: _busy
+                ? null
+                : (n) => setState(() => settings.ballCount = n),
+            footnote: s.t('duel.ballsHost'),
+          ),
+        ),
+        const SizedBox(height: 14),
         NeonButton(
           label: s.t('duel.create'),
           icon: Icons.add_circle_outline,
@@ -364,7 +389,16 @@ class _DuelLobbyScreenState extends State<DuelLobbyScreen> {
           ),
           const SizedBox(height: 14),
           CodeDisplay(code: code, color: theme.accentDuel),
-          const SizedBox(height: 18),
+          const SizedBox(height: 14),
+          // What this room is, stated in the waiting room: the creator sees the
+          // game they asked for while they wait, and it is the same sentence the
+          // joiner is shown before the first serve.
+          Text(
+            s.f('duel.ballsRoom', {'balls': s.balls(controller.ballCount)}),
+            textAlign: TextAlign.center,
+            style: TextStyle(color: theme.textDim, fontSize: 12),
+          ),
+          const SizedBox(height: 16),
           Row(
             mainAxisAlignment: MainAxisAlignment.center,
             children: [

@@ -98,7 +98,7 @@ void main() {
     // A paddle, a live ball, one wall and one star — the five things the
     // illustration is meant to show, in the real simulation's own types.
     expect(state.players, hasLength(1));
-    expect(state.ball.active, isTrue);
+    expect(state.balls.single.active, isTrue);
     expect(state.walls, hasLength(1));
     expect(state.walls.single.solid, isTrue);
     expect(state.pickups.single.type, PickupType.star);

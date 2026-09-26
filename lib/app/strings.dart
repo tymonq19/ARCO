@@ -71,6 +71,14 @@ class Strings {
     'code': code.toUpperCase(),
   });
 
+  /// How many balls a game is played with, as the app names it (SPEC §2.3).
+  ///
+  /// One phrase for the toggle, the leaderboard's board switch, the duel room
+  /// and the personal best, so the same game is never called two things. The
+  /// case is the theme's to decide (`GameTheme.heading`), which is why this is
+  /// set in sentence case.
+  String balls(int count) => t(count >= 2 ? 'game.twoBalls' : 'game.oneBall');
+
   /// Message for a score-submission error code (SPEC §4). Unlike [error] this
   /// falls back to "the server refused it" rather than to a generic failure:
   /// the player is being told what happened to a game they just played.
@@ -146,6 +154,10 @@ class Strings {
     'home.leaderboard': 'LEADERBOARD',
     'home.settings': 'SETTINGS',
     'home.best': 'Personal best',
+    // Named with the board it belongs to as soon as the player has chosen a
+    // game other than the classic one: the figure changes when the ball count
+    // does, and a number that moves without saying why reads as a bug.
+    'home.bestOf': 'Personal best · {balls}',
     'home.noBest': 'No games played yet',
     'home.rank': 'Global rank',
     'home.countryRank': 'Rank in {country}',
@@ -161,6 +173,14 @@ class Strings {
     'hud.time': 'Time',
     'hud.best': 'Best',
     'hud.lives': 'Lives',
+    // How many balls the next game is played with (SPEC §2.3). A rule of the
+    // game, not a preference, so it is worded as one and lives next to the
+    // serve it changes.
+    'game.balls': 'Balls in play',
+    'game.oneBall': '1 ball',
+    'game.twoBalls': '2 balls',
+    'game.ballsNote':
+        'Two balls is a different game: losing either one costs a life.',
     'solo.tapToStart': 'TAP TO START',
     'solo.controlsHint.joystick':
         'Slide your thumb on the lower half of the screen',
@@ -196,6 +216,10 @@ class Strings {
     'duel.disconnected': 'Disconnected',
     'duel.ping': 'Ping',
     'duel.opponentJoined': '{name} joined!',
+    // The ball count is the creator's to pick, and the joiner is told what they
+    // have walked into before the first serve (SPEC §2.3, §3).
+    'duel.ballsRoom': 'This room plays {balls}',
+    'duel.ballsHost': 'You pick; your opponent is told before the first serve.',
     'duel.starting': 'Starting…',
     'duel.getReady': 'GET READY',
     'duel.go': 'GO!',
@@ -214,7 +238,10 @@ class Strings {
     'error.not_in_room': 'You are not in a room',
     'error.bad_message': 'Protocol error',
     'error.rate_limited': 'Too many requests — try again in a minute',
-    'error.bad_version': 'This app version is not supported by the server',
+    // Both version refusals say what to do about it. "Not supported by the
+    // server" reads as a verdict the player has to accept; the truth is that a
+    // newer build fixes it, and on a submission the game is still stored.
+    'error.bad_version': 'Update Arco to play online',
     'error.bad_name': 'Invalid nickname',
     'error.connection': 'Could not connect to the server',
     'error.timeout': 'The server did not respond in time',
@@ -226,13 +253,19 @@ class Strings {
     'error.invalid_name': 'Invalid nickname',
     'error.invalid_replay': 'The server could not verify this game',
     'error.replay_mismatch': 'The score does not match the game',
-    'error.unsupported_version':
-        'This app version is not supported by the server',
+    // The run was fine; this build's replay format is not one the server reads
+    // (SPEC §2.5: `Replay.version`). The game stays stored, so this is an
+    // instruction and not a verdict.
+    'error.unsupported_version': 'Update Arco to submit this score',
     'error.too_large': 'That game is too long to submit',
     'lb.title': 'LEADERBOARD',
     'lb.all': 'All time',
     'lb.week': 'This week',
     'lb.day': 'Today',
+    // Which of the two boards is on screen (SPEC §4.6): the ball count is part
+    // of the game, so a one-ball score and a two-ball score are not ranked
+    // against each other.
+    'lb.board': 'Board',
     'lb.empty': 'No scores yet — be the first!',
     'lb.offline': 'Could not load the leaderboard',
     'lb.retry': 'RETRY',
@@ -508,6 +541,7 @@ class Strings {
     'home.leaderboard': 'TABLICA WYNIKÓW',
     'home.settings': 'USTAWIENIA',
     'home.best': 'Rekord osobisty',
+    'home.bestOf': 'Rekord osobisty · {balls}',
     'home.noBest': 'Nie zagrano jeszcze żadnej gry',
     'home.rank': 'Miejsce na świecie',
     'home.countryRank': 'Miejsce w {country}',
@@ -523,6 +557,11 @@ class Strings {
     'hud.time': 'Czas',
     'hud.best': 'Rekord',
     'hud.lives': 'Życia',
+    'game.balls': 'Piłki w grze',
+    'game.oneBall': '1 piłka',
+    'game.twoBalls': '2 piłki',
+    'game.ballsNote':
+        'Dwie piłki to inna gra: utrata którejkolwiek kosztuje życie.',
     'solo.tapToStart': 'DOTKNIJ, ABY ZACZĄĆ',
     'solo.controlsHint.joystick': 'Przesuwaj kciukiem po dolnej połowie ekranu',
     'solo.controlsHint.tilt': 'Przechylaj telefon, aby ruszać paletką',
@@ -558,6 +597,10 @@ class Strings {
     'duel.disconnected': 'Rozłączono',
     'duel.ping': 'Ping',
     'duel.opponentJoined': '{name} dołącza do gry!',
+    'duel.ballsRoom': 'W tym pokoju gracie: {balls}',
+    'duel.ballsHost':
+        'Ty wybierasz; przeciwnik dowie się przed pierwszym '
+        'serwisem.',
     'duel.starting': 'Start…',
     'duel.getReady': 'PRZYGOTUJ SIĘ',
     'duel.go': 'START!',
@@ -576,8 +619,7 @@ class Strings {
     'error.not_in_room': 'Nie jesteś w żadnym pokoju',
     'error.bad_message': 'Błąd protokołu',
     'error.rate_limited': 'Zbyt wiele prób — spróbuj za minutę',
-    'error.bad_version':
-        'Ta wersja aplikacji nie jest obsługiwana przez serwer',
+    'error.bad_version': 'Zaktualizuj Arco, aby zagrać online',
     'error.bad_name': 'Nieprawidłowy pseudonim',
     'error.connection': 'Nie można połączyć się z serwerem',
     'error.timeout': 'Serwer nie odpowiedział na czas',
@@ -589,13 +631,13 @@ class Strings {
     'error.invalid_name': 'Nieprawidłowy pseudonim',
     'error.invalid_replay': 'Serwer nie mógł zweryfikować tej gry',
     'error.replay_mismatch': 'Wynik nie zgadza się z przebiegiem gry',
-    'error.unsupported_version':
-        'Ta wersja aplikacji nie jest obsługiwana przez serwer',
+    'error.unsupported_version': 'Zaktualizuj Arco, aby wysłać wynik',
     'error.too_large': 'Ta gra jest zbyt długa, aby ją wysłać',
     'lb.title': 'TABLICA WYNIKÓW',
     'lb.all': 'Wszech czasów',
     'lb.week': 'Ten tydzień',
     'lb.day': 'Dzisiaj',
+    'lb.board': 'Tablica',
     'lb.empty': 'Brak wyników — bądź pierwszy!',
     'lb.offline': 'Nie udało się wczytać tablicy wyników',
     'lb.retry': 'PONÓW',

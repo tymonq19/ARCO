@@ -224,11 +224,20 @@ class _HomeScreenState extends State<HomeScreen> {
                         mainAxisSize: MainAxisSize.min,
                         crossAxisAlignment: CrossAxisAlignment.stretch,
                         children: [
+                          // The record on the board the player's chosen game
+                          // counts for (SPEC §2.3, §4.6). The label names that
+                          // game as soon as it is not the classic one: the
+                          // figure changes with the ball count, and a number
+                          // that moves without saying why reads as a bug.
                           _statLine(
                             theme,
-                            s.t('home.best'),
-                            settings.bestScore > 0
-                                ? '${settings.bestScore}'
+                            settings.ballCount == minBallCount
+                                ? s.t('home.best')
+                                : s.f('home.bestOf', {
+                                    'balls': s.balls(settings.ballCount),
+                                  }),
+                            settings.bestScoreFor(settings.ballCount) > 0
+                                ? '${settings.bestScoreFor(settings.ballCount)}'
                                 : s.t('home.noBest'),
                           ),
                           // The standing comes from `GET /api/players/me`
