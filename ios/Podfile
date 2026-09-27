@@ -1,5 +1,7 @@
-# Uncomment this line to define a global platform for your project
-# platform :ios, '13.0'
+# App Store Connect refuses a target below 15.0 from April 2027 (90068), and
+# a declared platform is also what stops a pod being resolved for the
+# simulator in a device build.
+platform :ios, '15.0'
 
 # CocoaPods analytics sends network stats synchronously affecting flutter build latency.
 ENV['COCOAPODS_DISABLE_STATS'] = 'true'
@@ -39,6 +41,12 @@ end
 post_install do |installer|
   installer.pods_project.targets.each do |target|
     flutter_additional_ios_build_settings(target)
+    target.build_configurations.each do |config|
+      # Pods inherit whatever they were written against, which is often older
+      # than the app. Forcing it here keeps every slice in the archive built
+      # for the same minimum as Runner.
+      config.build_settings['IPHONEOS_DEPLOYMENT_TARGET'] = '15.0'
+    end
     # Rewarded ads (SPEC §4.10), and the one build setting this feature costs.
     #
     # `google_mobile_ads`' **public** headers `#import
