@@ -21,10 +21,18 @@ class Replay {
   ///
   /// 1 → 2 (wall shapes, `GameConfig.ballCount`): the simulation itself
   /// changed, so a v1 replay cannot be re-simulated by this build at all — its
-  /// walls were single segments and its config had no ball count. A v1 replay is
-  /// refused with `unsupported_version`, which means *the client is too old for
-  /// this server*, not *this score is bad*: the player must update the app.
-  static const int version = 2;
+  /// walls were single segments and its config had no ball count.
+  ///
+  /// 2 → 3 (the two-ball pace, SPEC §2.3): the two-ball game got its own serve
+  /// speed and ceiling, a speed curve that flattens instead of multiplying, and
+  /// a staggered serve. A v2 two-ball game therefore plays out differently under
+  /// this build, and a v2 one-ball game — which this build still simulates bit
+  /// for bit — cannot be told apart from it by its bytes.
+  ///
+  /// An old replay is refused with `unsupported_version`, which means *the
+  /// client is too old for this server*, not *this score is bad*: the player
+  /// must update the app.
+  static const int version = 3;
 
   final GameConfig config;
 
@@ -98,7 +106,10 @@ class ReplayResult {
 class ReplayVerifier {
   ReplayVerifier._();
 
-  static const int maxTicks = 216000; // 1 hour of play
+  /// The longest replay this build accepts: [maxGameTicks], the length of the
+  /// longest game it can produce. The simulation stops at the hour, so a replay
+  /// past it did not come from a game.
+  static const int maxTicks = maxGameTicks;
 
   /// Solo replays only (mode must be solo). Runs the sim from `config.seed`,
   /// applying `inputs[p].inputAt(tick)` each tick, until `phase == gameOver`

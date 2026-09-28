@@ -1,11 +1,12 @@
 /// Cross-platform determinism check (SPEC §2.1).
 ///
-/// Prints a fingerprint of four scenarios and a combined total:
+/// Prints a fingerprint of five scenarios and a combined total:
 ///
 ///     duel-1ball  hash=<h> score0=<s0> score1=<s1> tick=<t> walls=<a/b/c>
 ///     solo-2ball  hash=<h> …
 ///     duel-2ball  hash=<h> …
 ///     wallshapes  hash=<h> runs=<n>
+///     stagger     hash=<h> serves=<n> launches=<n>
 ///     total=<h>
 ///
 /// The same lines must be printed by all three backends:
@@ -27,7 +28,12 @@
 /// `wallshapes` then drives the polyline collision directly over a grid of
 /// every shape, orientation, length and shape parameter the game can spawn,
 /// because a shape that only appears when the rng feels like it is a shape this
-/// check cannot promise anything about.
+/// check cannot promise anything about. `stagger` does the same for the
+/// staggered two-ball serve (SPEC §2.3): the two-ball games above do serve many
+/// rallies, but only a run built to lose lives sees enough serves — and the
+/// hash it mixes is taken *inside* the stagger window, on the ticks where one
+/// ball is flying and the other is parked at the origin carrying the velocity it
+/// will leave with, which is the state a backend could disagree about.
 library;
 
 import 'package:arco_core/arco_core.dart';
@@ -164,6 +170,52 @@ GameState _shot(int seed, double direction) {
   return ('wallshapes  hash=$h runs=$runs', h);
 }
 
+/// Serves a lot of two-ball rallies and fingerprints the stagger.
+///
+/// The bot dodges every ball and the lives are topped up after each step (a
+/// plain assignment: the rng is untouched), so a rally ends every couple of
+/// seconds and the run is mostly serves. Every tick between a serve and its
+/// queued launch is mixed into the hash, and `serves`/`launches` must agree —
+/// a backend that dropped or duplicated a launch would show up as both a
+/// different hash and a different count.
+(String, int) _stagger() {
+  var h = 0x811C9DC5;
+  var serves = 0;
+  var launches = 0;
+  for (final mode in GameMode.values) {
+    final config = GameConfig(mode: mode, seed: 20260928, ballCount: 2);
+    final state = GameState.initial(config);
+    final inputs = List<PlayerInput>.filled(
+      config.playerCount,
+      PlayerInput.none,
+    );
+    for (var t = 0; t < 4000; t++) {
+      for (var p = 0; p < inputs.length; p++) {
+        inputs[p] = ScriptedInput.avoidBall(state, p);
+      }
+      Simulation.step(state, inputs);
+      for (var e = 0; e < state.events.length; e++) {
+        final event = state.events[e];
+        if (event.type != GameEventType.serve) continue;
+        if (event.ball < 0) {
+          serves += 1;
+        } else {
+          launches += 1;
+        }
+      }
+      // Inside the stagger window: one ball live, one queued.
+      if (state.phase == Phase.playing && state.serveTimer > 0) {
+        h = _mix(h, state.hash());
+        h = _mix(h, state.serveTimer);
+      }
+      for (var p = 0; p < state.players.length; p++) {
+        state.players[p].lives = startLives;
+      }
+    }
+  }
+  return ('stagger     hash=$h serves=$serves launches=$launches', h);
+}
+
 void main() {
   final results = <(String, int)>[
     _game('duel-1ball', const GameConfig(mode: GameMode.duel, seed: _seed)),
@@ -176,6 +228,7 @@ void main() {
       const GameConfig(mode: GameMode.duel, seed: 4242, ballCount: 2),
     ),
     _wallShapes(),
+    _stagger(),
   ];
   var total = 0x811C9DC5;
   for (var i = 0; i < results.length; i++) {

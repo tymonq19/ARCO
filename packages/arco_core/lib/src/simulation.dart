@@ -76,6 +76,11 @@ class Simulation {
   /// Order within a tick: paddles → serve timer / ball motion (each ball in
   /// index order, sub-stepped: walls, paddles, pickups, escape) → wall timers →
   /// pickup timers → `tick += 1` → solo survival point.
+  ///
+  /// While playing, the same `serveTimer` counts down the staggered launch of a
+  /// ball the serve left [Ball.queued] (two-ball game only; with one ball it is 0
+  /// throughout [Phase.playing] and this costs nothing). The ball is released
+  /// *before* the tick's motion, so it flies on the tick it becomes live.
   static void step(GameState s, List<PlayerInput> inputs) {
     s.events.clear();
     if (s.phase == Phase.gameOver) return;
@@ -87,6 +92,10 @@ class Simulation {
       s.serveTimer -= 1;
       if (s.serveTimer <= 0) _serve(s);
     } else {
+      if (s.serveTimer > 0) {
+        s.serveTimer -= 1;
+        if (s.serveTimer <= 0) _launchQueued(s);
+      }
       _moveBalls(s);
     }
     _updateWalls(s);
@@ -97,6 +106,56 @@ class Simulation {
         s.tick % tickRate == 0) {
       s.players[0].score += 1;
     }
+    // The clock, last (SPEC §2.3). Checked after the survival point so the
+    // final second of the hour is paid for, and after `tick += 1` so the game
+    // is over *at* `maxGameTicks`: a replay of the full hour has
+    // `finalTick == maxGameTicks`, which is exactly what the verifier allows.
+    //
+    // Any phase but gameOver, deliberately. The hour is a wall-clock limit on
+    // the whole game, not on the rallies inside it, so a game that happens to be
+    // between serves when it strikes ends too — otherwise that one state would
+    // be the way to hold a game open for ever.
+    if (s.phase != Phase.gameOver && s.tick >= maxGameTicks) {
+      _finish(s, _winnerOnTime(s));
+    }
+  }
+
+  /// Ends the game: [winner] is the winning player in duel, -1 when there is
+  /// nobody to name (solo, or a duel the clock left level).
+  ///
+  /// Every ball is parked at the origin and stilled so the last frame cannot be
+  /// read as a rally still in progress, and so two states that ended the same
+  /// way hash the same however the balls happened to be flying.
+  static void _finish(GameState s, int winner) {
+    s.phase = Phase.gameOver;
+    s.winner = winner;
+    // Nothing is waiting to launch any more (a no-op with one ball, whose
+    // serve timer is already 0 all through Phase.playing).
+    s.serveTimer = 0;
+    for (var i = 0; i < s.balls.length; i++) {
+      final b = s.balls[i];
+      b.active = false;
+      b.x = 0;
+      b.y = 0;
+      b.vx = 0;
+      b.vy = 0;
+      b.speed = 0;
+      b.owner = -1;
+    }
+    s.events.add(GameEvent(GameEventType.gameOver, player: s.winner));
+  }
+
+  /// The winner of a duel stopped by the clock: the higher score, and if the
+  /// scores are level the player with more lives left. Level on both is a draw,
+  /// which is -1 — the same "nobody won" both clients already draw for a game
+  /// they did not win.
+  static int _winnerOnTime(GameState s) {
+    if (s.config.mode == GameMode.solo) return -1;
+    final a = s.players[0];
+    final b = s.players[1];
+    if (a.score != b.score) return a.score > b.score ? 0 : 1;
+    if (a.lives != b.lives) return a.lives > b.lives ? 0 : 1;
+    return -1;
   }
 
   // ------------------------------------------------------------------ paddles
@@ -147,16 +206,29 @@ class Simulation {
 
   // -------------------------------------------------------------------- serve
 
-  /// Launches every ball from the origin. One serve direction is drawn (solo:
+  /// Serves the rally from the origin. One serve direction is drawn (solo:
   /// anywhere on the circle; duel: into the receiver's half), and the balls are
   /// fanned symmetrically around it by [serveFan] per gap, so with one ball the
   /// direction is exactly the drawn angle and with two they leave 0.7 rad apart.
-  /// One `serve` event covers the whole rally.
+  ///
+  /// Only ball 0 leaves now. Every further ball is parked at the origin as
+  /// [Ball.queued] — its direction and speed already decided, so the player can
+  /// see it waiting and see where it will go — and released
+  /// `config.serveStaggerTicks` later by [_launchQueued], because one paddle
+  /// cannot be at two arrival points at once (SPEC §2.3). With one ball nothing
+  /// is queued, the stagger is 0 and this is the classic serve.
+  ///
+  /// The whole rally costs the randomness of one direction, whatever the ball
+  /// count. One `serve` event with `ball == -1` covers the rally; each staggered
+  /// launch emits its own.
   static void _serve(GameState s) {
     final balls = s.balls;
     final rng = s.rng;
-    final ramp = baseSpeed + 0.01 * (s.tick / tickRate);
-    final speed = ramp > maxServeSpeed ? maxServeSpeed : ramp;
+    final config = s.config;
+    final ramp =
+        config.serveBaseSpeed + config.serveSpeedRamp * (s.tick / tickRate);
+    final cap = config.serveSpeedCap;
+    final speed = ramp > cap ? cap : ramp;
     int receiver;
     double angle;
     if (s.config.mode == GameMode.duel) {
@@ -171,6 +243,9 @@ class Simulation {
       angle = rng.nextRange(0, DetMath.tau);
     }
     final n = balls.length;
+    // A stagger of 0 (one ball, or a config that switches it off) serves every
+    // ball on this tick, which is what the game did before the stagger existed.
+    final stagger = n > 1 ? config.serveStaggerTicks : 0;
     for (var i = 0; i < n; i++) {
       final ball = balls[i];
       final direction = n == 1
@@ -182,11 +257,42 @@ class Simulation {
       ball.vx = DetMath.cos(direction) * speed;
       ball.vy = DetMath.sin(direction) * speed;
       ball.owner = -1;
-      ball.active = true;
+      // Ball 0 leaves now; the rest wait their turn (queued: parked, but with
+      // their velocity already set).
+      ball.active = i == 0 || stagger <= 0;
     }
     s.phase = Phase.playing;
-    s.serveTimer = 0;
+    s.serveTimer = stagger > 0 ? stagger : 0;
     s.events.add(GameEvent(GameEventType.serve, player: receiver));
+  }
+
+  /// Releases the next ball the serve left [Ball.queued]: it becomes live at the
+  /// origin along the velocity the serve gave it, and the timer is re-armed if a
+  /// further ball is still waiting (so any ball count staggers evenly).
+  ///
+  /// Emits a `serve` event carrying that ball's index — the rally's own serve
+  /// event is the one with `ball == -1` — so a client can sound and spark the
+  /// launch. A ball parked with zero velocity is not queued and is never
+  /// released here: that is what the serve pause and game over leave behind.
+  static void _launchQueued(GameState s) {
+    final balls = s.balls;
+    var released = -1;
+    var pending = false;
+    for (var i = 0; i < balls.length; i++) {
+      final ball = balls[i];
+      if (!ball.queued) continue;
+      if (released < 0) {
+        ball.active = true;
+        released = i;
+      } else {
+        pending = true;
+        break;
+      }
+    }
+    s.serveTimer = pending ? s.config.serveStaggerTicks : 0;
+    if (released >= 0) {
+      s.events.add(GameEvent(GameEventType.serve, ball: released));
+    }
   }
 
   // --------------------------------------------------------------------- ball
@@ -194,6 +300,11 @@ class Simulation {
   /// Moves every ball, in index order. A ball that escapes ends the rally for
   /// all of them (SPEC §2.3), so the loop stops as soon as the phase changes:
   /// two balls can never cost two lives in one tick.
+  ///
+  /// A ball still [Ball.queued] by a staggered serve is skipped entirely: it
+  /// does not move, bounce, collect or escape until its launch. It is still a
+  /// ball to the spawn rules, which keep walls and pickups clear of the origin
+  /// it is waiting on.
   static void _moveBalls(GameState s) {
     final balls = s.balls;
     for (var i = 0; i < balls.length; i++) {
@@ -329,6 +440,31 @@ class Simulation {
     }
   }
 
+  /// The speed a ball carries away from a paddle hit, given the speed it
+  /// arrived with (SPEC §2.3). Never above `config.maxSpeed`.
+  ///
+  /// One ball: the classic geometric law, × [hitSpeedFactor] per hit until it
+  /// pins at the ceiling — unchanged, and pinned by the golden hashes.
+  ///
+  /// Two balls: each hit closes [twoBallHitGain] of the gap that is left to the
+  /// ceiling, with a floor of [twoBallHitMinGain]. That is the same total range
+  /// travelled in a different shape: steep while the rally is young, then
+  /// flattening into a plateau, so a long rally is something the player settles
+  /// into instead of being timed out by a speed that keeps multiplying. The
+  /// floor is what makes the ceiling an event rather than an asymptote — it is
+  /// reached exactly, after 37 hits, and never passed.
+  static double speedAfterHit(GameConfig config, double speed) {
+    final cap = config.maxSpeed;
+    if (config.twoBall) {
+      var gain = (cap - speed) * twoBallHitGain;
+      if (gain < twoBallHitMinGain) gain = twoBallHitMinGain;
+      final next = speed + gain;
+      return next > cap ? cap : next;
+    }
+    final next = speed * hitSpeedFactor;
+    return next > cap ? cap : next;
+  }
+
   /// Returns true when a paddle bounced [ball].
   ///
   /// Each ball is resolved on its own, so a paddle can bounce two balls in the
@@ -379,9 +515,7 @@ class Simulation {
       // Pull the ball back onto the contact radius.
       ball.x = x / r * paddleContactRadius;
       ball.y = y / r * paddleContactRadius;
-      var speed = ball.speed * hitSpeedFactor;
-      final cap = s.config.maxSpeed;
-      if (speed > cap) speed = cap;
+      final speed = speedAfterHit(s.config, ball.speed);
       ball.speed = speed;
       ball.vx = ux * speed;
       ball.vy = uy * speed;
@@ -444,8 +578,10 @@ class Simulation {
   /// Returns true when [ball] escaped (the rally is over).
   ///
   /// An escape costs a life and ends the rally for **every** ball: they are all
-  /// recalled to the origin and the next serve launches them together. Two
-  /// balls therefore cost exactly what one ball costs — one life per escape —
+  /// recalled to the origin — including one still waiting for its staggered
+  /// launch, so no ball is left behind — and the next serve starts its stagger
+  /// over. Two balls therefore cost exactly what one ball costs — one life per
+  /// escape —
   /// and a two-ball game never degrades into a one-ball game halfway through a
   /// life. It also keeps the state machine of the one-ball game untouched: one
   /// escape, one life, one serve.
@@ -467,19 +603,7 @@ class Simulation {
       ),
     );
     if (p.lives <= 0) {
-      s.phase = Phase.gameOver;
-      s.winner = duel ? 1 - loser : -1;
-      for (var i = 0; i < s.balls.length; i++) {
-        final b = s.balls[i];
-        b.active = false;
-        b.x = 0;
-        b.y = 0;
-        b.vx = 0;
-        b.vy = 0;
-        b.speed = 0;
-        b.owner = -1;
-      }
-      s.events.add(GameEvent(GameEventType.gameOver, player: s.winner));
+      _finish(s, duel ? 1 - loser : -1);
     } else {
       // Duel: the next serve goes toward the player who lost the point.
       s.prepareServe(loser);

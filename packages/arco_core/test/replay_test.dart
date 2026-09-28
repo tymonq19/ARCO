@@ -272,30 +272,41 @@ void main() {
     test(
       'verifies a maximum-length replay well under the time budget',
       () {
-        // The aim-at-ball bot survives indefinitely, so this drives the verifier
-        // through the full maxTicks loop (the longest run the server can face).
+        // The aim-at-ball bot never runs out of lives, so this is the longest
+        // run the server can ever be handed: the full hour, ended by the clock
+        // rather than by a miss. It is a *valid* run — a player good enough to
+        // survive to the limit keeps the score they earned — so the point of
+        // this test is that the verifier both accepts it and gets through it
+        // quickly enough to stay on the request path.
         final s = GameState.initial(
           const GameConfig(mode: GameMode.solo, seed: 4),
         );
         final log = InputLog();
         final inputs = <PlayerInput>[PlayerInput.none];
-        while (s.tick < ReplayVerifier.maxTicks) {
+        while (s.phase != Phase.gameOver) {
           final input = ScriptedInput.aimAtBall(s, 0);
           log.record(s.tick, input);
           inputs[0] = input;
           Simulation.step(s, inputs);
         }
+        expect(
+          s.tick,
+          ReplayVerifier.maxTicks,
+          reason: 'the bot survives, so only the clock can have ended this',
+        );
+        expect(s.players[0].lives, greaterThan(0));
         final replay = Replay(
           config: const GameConfig(mode: GameMode.solo, seed: 4),
           inputs: [log],
-          finalTick: ReplayVerifier.maxTicks,
+          finalTick: s.tick,
           claimedScore: s.players[0].score,
         );
         final watch = Stopwatch()..start();
         final result = ReplayVerifier.verify(replay);
         watch.stop();
+        expect(result.ok, isTrue, reason: result.reason);
         expect(result.ticks, ReplayVerifier.maxTicks);
-        expect(result.reason, 'not_finished');
+        expect(result.score, s.players[0].score);
         expect(result.hash, s.hash());
         expect(
           watch.elapsedMilliseconds,

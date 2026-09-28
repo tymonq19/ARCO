@@ -174,9 +174,26 @@ void main() {
       final body = scoreBody('Duo', twoBall);
       final replay = body['replay'] as Map<String, dynamic>;
       final logs = (replay['in'] as List<dynamic>).cast<List<dynamic>>();
-      // Drop the last input change: the paddle then misses differently and the
-      // game does not end where the claim says it does.
-      logs[0] = logs[0].sublist(0, logs[0].length - 1);
+      // Truncate the log to its first quarter -- the edit someone would make to
+      // pass off a short run as a long one. The log is delta encoded, so the
+      // paddle then holds its quarter-way aim for the rest of the game, misses,
+      // and the run ends nowhere near where the claim says it does.
+      //
+      // Note what this test does *not* claim. The verifier compares outcomes,
+      // not bytes: it re-simulates, then checks the score and the finishing
+      // tick. Deleting one entry from the middle of this log is not detected,
+      // and should not be -- the aim is quantized to `inputAimSteps`,
+      // neighbouring entries are often one step apart, and a paddle that
+      // reaches its target in a single step absorbs the difference entirely.
+      // That run really did play out that way and really did score that. What
+      // cannot survive is a log that produces a different game.
+      final log = logs[0];
+      expect(
+        log.length,
+        greaterThan(8),
+        reason: 'a log with nothing to truncate proves nothing',
+      );
+      logs[0] = log.sublist(0, log.length ~/ 4);
       replay['in'] = logs;
       final r = await post(body);
       expect(r.statusCode, 400, reason: r.body);
@@ -240,8 +257,16 @@ void main() {
           claimedScore: 0,
         ),
       );
-      expect(result.reason, anyOf('score_mismatch', 'early_finish'));
-      expect(result.ticks, greaterThan(0), reason: 'it really did simulate');
+      // Which refusal it is depends on whether a still paddle has run out of
+      // lives by tick 600, which is a tuning detail. What matters is that the
+      // answer came from the simulation rather than from the config check, and
+      // that it simulated all the ticks it was given.
+      expect(
+        result.reason,
+        anyOf('score_mismatch', 'early_finish', 'not_finished'),
+      );
+      expect(result.reason, isNot('bad_config'));
+      expect(result.ticks, 600, reason: 'it really did simulate');
     });
 
     test('a missing ball count is the classic one-ball game', () async {

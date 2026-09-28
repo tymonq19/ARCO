@@ -81,21 +81,41 @@ void main() {
       expect(state.config.ballCount, 2);
       expect(state.balls, hasLength(2));
 
-      // Both balls leave the origin on the same tick and are recalled together
-      // (SPEC §2.3), so a snapshot never catches one in play and one parked.
-      var sawFlight = false;
-      for (var i = 0; i < 40 && !sawFlight; i++) {
+      // The two balls are served one after the other (SPEC §2.3): the second
+      // waits `twoBallServeStaggerTicks` so one paddle can reach the first and
+      // still get back for the second. So a snapshot legitimately catches one
+      // in play and one still parked — that window is the feature, and what
+      // this asserts is that the count only ever climbs 0 -> 1 -> 2 and never
+      // skips or goes backwards mid-rally.
+      var sawOne = false;
+      var sawBoth = false;
+      var previous = 0;
+      for (var i = 0; i < 60 && !sawBoth; i++) {
         final live = await firstSnapshot(duel.a);
         expect(live.balls, hasLength(2));
         final active = live.balls.where((b) => b.active).length;
         expect(
           active,
-          anyOf(0, 2),
-          reason: 'balls are served and recalled as a set, never one at a time',
+          lessThanOrEqualTo(2),
+          reason: 'a two-ball room never has more than two balls in flight',
         );
-        sawFlight = active == 2;
+        if (active > previous) {
+          expect(
+            active - previous,
+            1,
+            reason: 'balls join the rally one at a time, never both at once',
+          );
+        }
+        previous = active;
+        if (active == 1) sawOne = true;
+        if (active == 2) sawBoth = true;
       }
-      expect(sawFlight, isTrue, reason: 'the serve has to happen');
+      expect(sawBoth, isTrue, reason: 'the serve has to finish');
+      expect(
+        sawOne,
+        isTrue,
+        reason: 'the stagger has to be observable: one ball out, then two',
+      );
     });
 
     test('the joining player learns it before the countdown starts', () async {

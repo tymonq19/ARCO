@@ -704,9 +704,22 @@ void main() {
 
     test('tokens earned from play can buy an item', () async {
       // The whole loop, end to end: play, earn, buy, wear.
+      //
+      // Seven runs, because the fixture player scores 1 100 – 1 700 a run and a
+      // run pays score/100: about 13 Sparks each, so the cheapest item is a few
+      // evenings of play rather than one lucky game. Well under the 200-a-day
+      // cap, which has its own tests.
       final me = await issuePlayer(server, name: 'Tester');
       var balance = 0;
-      for (final seed in <int>[20260923, 424242, 777001, 31337, 99001]) {
+      for (final seed in <int>[
+        20260923,
+        424242,
+        777001,
+        31337,
+        99001,
+        5150,
+        8080,
+      ]) {
         final r = await submit(
           recordScoringSoloReplay(seed: seed),
           auth: authOf(me),

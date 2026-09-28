@@ -6,15 +6,19 @@
 // below is a rule the app and the server have to agree on:
 //
 //  * **The serve.** One direction is drawn and the balls are fanned
-//    symmetrically around it by `serveFan` per gap. All of them leave the origin
-//    on the same tick at the same speed, and one `serve` event covers the rally.
-//    A two-ball serve therefore costs exactly the randomness a one-ball serve
-//    costs, and with one ball the fan offset is 0 — the serve is unchanged.
+//    symmetrically around it by `serveFan` per gap, at one shared speed — the
+//    two-ball serve speed, which is its own (see two_ball_pace_test.dart for the
+//    pace and the stagger). Ball 0 leaves at once and ball 1 waits
+//    `twoBallServeStaggerTicks`, so one paddle is never asked to be at two
+//    arrival points at the same moment. A two-ball serve still costs exactly the
+//    randomness a one-ball serve costs, and with one ball the fan offset is 0 and
+//    the stagger is 0 — the serve is unchanged.
 //  * **An escape while the other ball is live.** The first ball to leave the
 //    arena costs one life and ends the rally for every ball: they are all
-//    recalled to the origin and the next serve launches them together. Two balls
-//    can never cost two lives in one tick, and a two-ball game never degrades
-//    into a one-ball game halfway through a life.
+//    recalled to the origin — including one still waiting to launch — and the
+//    next serve staggers them again. Two balls can never cost two lives in one
+//    tick, and a two-ball game never degrades into a one-ball game halfway
+//    through a life.
 //  * **Resolution order.** Ball 0 moves and collides first, then ball 1. That is
 //    what decides a contested pickup and which escape ends the rally.
 //  * **One paddle, two balls, one tick.** Each ball is resolved on its own, so a
@@ -88,7 +92,11 @@ void main() {
             expect(b.y, 0);
             expect(b.vx, 0);
             expect(b.vy, 0);
-            expect(b.speed, baseSpeed);
+            expect(
+              b.speed,
+              s.config.serveBaseSpeed,
+              reason: 'the two-ball game waits on its own serve speed',
+            );
           }
           // While serving in a duel every ball carries the receiver.
           expect(
@@ -138,17 +146,31 @@ void main() {
         expect(DetMath.angleDiff(a1, a0), closeTo(serveFan, 1e-12));
         expect(DetMath.angleDiff(centre, a0), closeTo(serveFan / 2, 1e-12));
         expect(DetMath.angleDiff(a1, centre), closeTo(serveFan / 2, 1e-12));
-        // Same tick, same speed, both live, neither owned.
+        // Same tick, one shared speed — the two-ball serve speed, not the
+        // one-ball one — nothing owned, and both still at the origin.
         expect(two.tick, one.tick);
-        expect(two.balls[0].speed, one.balls[0].speed);
-        expect(two.balls[1].speed, one.balls[0].speed);
+        expect(two.balls[0].speed, two.balls[1].speed);
+        final launchTick = two.tick - 1;
+        expect(
+          two.balls[0].speed,
+          closeTo(
+            twoBallBaseSpeed + twoBallServeRamp * (launchTick / tickRate),
+            1e-12,
+          ),
+        );
+        expect(one.balls[0].speed, greaterThan(two.balls[0].speed));
         for (final b in two.balls) {
-          expect(b.active, isTrue);
           expect(b.owner, -1);
           expect(b.x, 0);
           expect(b.y, 0);
           expect(math.sqrt(b.vx * b.vx + b.vy * b.vy), closeTo(b.speed, 1e-12));
         }
+        // Ball 0 leaves now; ball 1 waits its turn, aimed and visible.
+        expect(two.balls[0].active, isTrue);
+        expect(two.balls[0].queued, isFalse);
+        expect(two.balls[1].active, isFalse);
+        expect(two.balls[1].queued, isTrue);
+        expect(two.serveTimer, twoBallServeStaggerTicks);
         // One event for the whole rally, belonging to no single ball.
         expect(
           two.events.where((e) => e.type == GameEventType.serve).length,
@@ -228,7 +250,10 @@ void main() {
       // Both balls were turned inward and sped up.
       for (final b in s.balls) {
         expect(b.x * b.vx + b.y * b.vy, lessThan(0));
-        expect(b.speed, closeTo(0.6 * hitSpeedFactor, 1e-12));
+        expect(
+          b.speed,
+          closeTo(Simulation.speedAfterHit(s.config, 0.6), 1e-12),
+        );
         expect(b.owner, 0);
       }
       // Both bounces scored, on one combo.
@@ -371,12 +396,13 @@ void main() {
         expect(b.y, 0);
         expect(b.vx, 0);
         expect(b.vy, 0);
-        expect(b.speed, baseSpeed);
+        expect(b.speed, s.config.serveBaseSpeed);
         expect(b.owner, -1);
       }
     });
 
-    test('the next serve brings both balls back', () {
+    test('the next serve brings both balls back, staggered again', () {
+      // The stagger is a property of every serve, not of the first one.
       final s = twoBallState();
       launchRadial(s, awayFromPaddle(0, 1.2), 0.6, escapeRadius + 0.02);
       Simulation.step(s, noneInputs(s));
@@ -384,11 +410,20 @@ void main() {
       stepToServe(s);
       expect(s.phase, Phase.playing);
       expect(s.balls.length, 2);
-      expect(s.balls.every((b) => b.active), isTrue);
+      expect(s.balls[0].active, isTrue);
+      expect(s.balls[1].queued, isTrue);
+      expect(s.serveTimer, twoBallServeStaggerTicks);
       expect(
         DetMath.angleDiff(velocityAngle(s, 1), velocityAngle(s, 0)),
         closeTo(serveFan, 1e-12),
       );
+      // And the queued ball does come out, on its own tick.
+      for (var i = 0; i < twoBallServeStaggerTicks; i++) {
+        expect(s.balls[1].active, isFalse, reason: 'too early at tick $i');
+        Simulation.step(s, noneInputs(s));
+      }
+      expect(s.balls[1].active, isTrue);
+      expect(s.balls[1].queued, isFalse);
     });
 
     test('two balls outside the arena in one tick still cost one life', () {
@@ -953,7 +988,22 @@ class _UnsupportedConfig implements GameConfig {
   int get playerCount => 1;
 
   @override
+  bool get twoBall => ballCount > 1;
+
+  @override
   double get maxSpeed => maxSpeedSolo;
+
+  @override
+  double get serveBaseSpeed => baseSpeed;
+
+  @override
+  double get serveSpeedRamp => serveRamp;
+
+  @override
+  double get serveSpeedCap => maxServeSpeed;
+
+  @override
+  int get serveStaggerTicks => 0;
 
   @override
   Map<String, dynamic> toJson() => {'m': 0, 's': 1, 'n': ballCount};

@@ -317,26 +317,31 @@ Replay recordSoloReplay({
 /// [recordSoloReplay] leaves the paddle still, which ends the game in a few
 /// hundred ticks for a score under 20 — below the earning threshold, so it can
 /// never pay a token. This plays properly instead: the paddle chases the ball
-/// that is nearest the rim, but from where that ball was [reactionTicks] ticks
-/// ago, which is what makes it eventually lose. Measured with the defaults:
-/// ~4 240 ticks (71 s) and a verified score of 2 218, in a 35 KB body — a
-/// realistic good run, well inside the 2 MB submission cap.
+/// that is nearest the rim, but from where that ball was N ticks ago, and N
+/// grows by one every [fatigueTicks] ticks. The lag is what makes it miss, and
+/// the growing lag is what makes it miss *eventually, always*.
 ///
-/// A smaller [reactionTicks] plays better and scores more; below about 14 the
-/// one-ball paddle stops losing at all and the game runs into
-/// `ReplayVerifier.maxTicks` with an input log too large to submit, which is
-/// itself worth knowing.
+/// The fatigue is not decoration. A fixed lag was enough while ball speed rose
+/// without limit, because the balls would outrun any lag sooner or later. Ball
+/// speed is now capped (SPEC §2.3), so a fixed-lag paddle can rally for ever:
+/// this fixture used to run into the game clock and come back `not_finished`,
+/// and which lag values did that was not even monotonic — 10 lost, 12 survived,
+/// 14 lost. A bot that gets steadily worse ends every game it plays, whatever
+/// the speeds are tuned to, which is what a fixture has to promise.
 ///
-/// With [ballCount] 2 the same paddle has two balls to meet and loses much
-/// sooner, so the default reaction is shorter there: 12 ticks, which measures at
-/// ~1 900 ticks and a verified score around 2 900 — a real two-ball run that
-/// earns real Sparks, which is what the board and the wallet tests need.
+/// Measured with the defaults over seeds 20260923 / 20260925 / 424242 / 7:
+/// 3 300 – 4 500 ticks (55 – 75 s), verified scores of 938 – 2 382, and input
+/// logs of 1 000 – 2 600 entries — realistic good runs that earn real Sparks,
+/// in bodies a long way inside the 2 MB submission cap.
+///
+/// A smaller [reactionTicks] or a longer [fatigueTicks] plays better and scores
+/// more; both still end.
 Replay recordScoringSoloReplay({
   int seed = 20260923,
   int ballCount = minBallCount,
-  int? reactionTicks,
+  int reactionTicks = 12,
+  int fatigueTicks = 300,
 }) {
-  final reaction = reactionTicks ?? (ballCount > 1 ? 12 : 16);
   final history = <double>[];
   return recordSoloReplay(
     seed: seed,
@@ -359,6 +364,7 @@ Replay recordScoringSoloReplay({
             ? (history.isEmpty ? 0.0 : history.last)
             : DetMath.atan2(target.y, target.x),
       );
+      final reaction = reactionTicks + state.tick ~/ fatigueTicks;
       final index = history.length - 1 - reaction;
       return PlayerInput.aimAngle(history[index < 0 ? 0 : index]);
     },

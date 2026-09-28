@@ -1072,6 +1072,17 @@ void main() {
       expect(maxSpeedSolo, 1.6);
       expect(maxSpeedDuel, 1.5);
       expect(hitSpeedFactor, 1.035);
+      expect(serveRamp, 0.01);
+      // The two-ball pace (see two_ball_pace_test.dart for why each is what it
+      // is); the one-ball values above are not allowed to move.
+      expect(twoBallBaseSpeed, 0.42);
+      expect(twoBallServeRamp, 0.003);
+      expect(twoBallMaxServeSpeed, 0.57);
+      expect(twoBallMaxSpeed, 0.72);
+      expect(twoBallHitGain, 0.09);
+      expect(twoBallHitMinGain, 0.0025);
+      expect(twoBallServeStaggerTicks, 65);
+      expect(serveFan, 0.7);
       expect(escapeRadius, 1.06);
       expect(serveTicks, 60);
       expect(startLives, 3);

@@ -61,7 +61,32 @@ class GameConfig {
   final int ballCount;
 
   int get playerCount => mode == GameMode.duel ? 2 : 1;
-  double get maxSpeed => mode == GameMode.duel ? maxSpeedDuel : maxSpeedSolo;
+
+  /// True for the two-ball game, which runs on its own pace (SPEC §2.3): a
+  /// slower serve, a lower ceiling, a flattening speed curve and a staggered
+  /// serve. With one ball every getter below returns the classic value.
+  bool get twoBall => ballCount > 1;
+
+  /// Hard ceiling on a ball's speed. With two balls to track the limit is what
+  /// the player can follow, which does not depend on how many players there are
+  /// — and in a duel each of them only defends a half, so the same ceiling is
+  /// if anything gentler there.
+  double get maxSpeed => twoBall
+      ? twoBallMaxSpeed
+      : (mode == GameMode.duel ? maxSpeedDuel : maxSpeedSolo);
+
+  /// Speed the balls leave the *first* serve with.
+  double get serveBaseSpeed => twoBall ? twoBallBaseSpeed : baseSpeed;
+
+  /// Units/s the serve speed gains per second of elapsed game.
+  double get serveSpeedRamp => twoBall ? twoBallServeRamp : serveRamp;
+
+  /// Ceiling of the serve speed ramp.
+  double get serveSpeedCap => twoBall ? twoBallMaxServeSpeed : maxServeSpeed;
+
+  /// Ticks between the launches of two consecutive balls of one serve; 0 with a
+  /// single ball, which therefore leaves exactly as it always did.
+  int get serveStaggerTicks => twoBall ? twoBallServeStaggerTicks : 0;
 
   Map<String, dynamic> toJson() => {'m': mode.index, 's': seed, 'n': ballCount};
 
@@ -158,9 +183,10 @@ class Ball {
   double x, y;
 
   /// Unit direction × speed — kept consistent with [speed] while the ball is
-  /// active. While the ball is inactive (during [Phase.serving] and after
-  /// [Phase.gameOver]) both components are 0; the serve direction is drawn
-  /// only when the serve timer reaches 0 (SPEC §2.3).
+  /// active. While the ball is inactive both components are 0, with one
+  /// exception: a ball [queued] for a staggered launch already carries the
+  /// velocity it will leave with, so the player can see where it will go
+  /// (SPEC §2.3). Zero during [Phase.serving] and after [Phase.gameOver].
   double vx, vy;
   double speed;
 
@@ -172,6 +198,15 @@ class Ball {
   /// half. It is reset to -1 by the serve itself.
   int owner;
   bool active;
+
+  /// True while this ball is waiting out its share of a staggered serve
+  /// (SPEC §2.3): parked at the origin, out of play — it moves, collides,
+  /// collects and escapes only while [active] — but already carrying the
+  /// velocity it will launch with, which is what tells it apart from a ball
+  /// parked by the serve pause or frozen by game over (both of those have zero
+  /// velocity). A renderer should draw it, dimmed: a ball the player watched
+  /// waiting is better than one that appears out of nowhere.
+  bool get queued => !active && (vx != 0 || vy != 0);
 
   Ball clone() => Ball(
     x: x,
@@ -411,7 +446,13 @@ class GameState {
   final List<Wall> walls;
   final List<Pickup> pickups;
 
-  /// Ticks left in [Phase.serving] before the ball is launched.
+  /// Ticks left in [Phase.serving] before the serve fires — and then, in a
+  /// two-ball game, ticks left until the ball [Ball.queued] by that serve
+  /// launches (SPEC §2.3). One counter does both jobs because they never
+  /// overlap: it is armed with `serveTicks` by [prepareServe], reaches 0, and
+  /// the serve re-arms it with `config.serveStaggerTicks`. With one ball the
+  /// stagger is 0, so the field is 0 for the whole of [Phase.playing] exactly as
+  /// it always was.
   int serveTimer;
   int nextWallIn;
   int nextPickupIn;
@@ -469,7 +510,7 @@ class GameState {
       ball.y = 0;
       ball.vx = 0;
       ball.vy = 0;
-      ball.speed = baseSpeed;
+      ball.speed = config.serveBaseSpeed;
       ball.owner = owner;
       ball.active = false;
     }

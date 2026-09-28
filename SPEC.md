@@ -67,11 +67,17 @@ Math convention: arena is a unit circle centered at (0,0), radius `arenaRadius =
 | `paddleRing` | 0.96 (paddle center radius; drawn from 0.94 to 0.98) |
 | `paddleHalfWidth` | 0.34 rad |
 | `paddleSpeed` | 4.2 rad/s (max angular speed) |
-| `baseSpeed` | 0.55 units/s |
-| `maxSpeed` | 1.6 (solo) / 1.5 (duel) |
-| `hitSpeedFactor` | 1.035 per paddle hit |
+| `baseSpeed` | 0.55 units/s at the first serve — **one ball** |
+| `serveRamp` | 0.01 units/s per second of elapsed game, capped at `maxServeSpeed` 0.95 — **one ball** |
+| `maxSpeed` | 1.6 (solo) / 1.5 (duel) — **one ball**; `GameConfig.maxSpeed` |
+| `hitSpeedFactor` | 1.035 per paddle hit — **one ball** |
+| `twoBallBaseSpeed` | 0.42 units/s at the first serve (two balls) |
+| `twoBallServeRamp` / `twoBallMaxServeSpeed` | 0.003 per second of play, capped at 0.57 (two balls) |
+| `twoBallMaxSpeed` | 0.72 — the two-ball ceiling, in both modes |
+| `twoBallHitGain` / `twoBallHitMinGain` | a paddle hit closes 0.09 of the speed left to the ceiling, never less than 0.0025 units/s (two balls) |
+| `twoBallServeStaggerTicks` | 65 (1.083 s between the launch of one ball of a serve and the next) |
 | `escapeRadius` | 1.06 (ball center beyond this = escaped) |
-| `serveTicks` | 60 (1 s pause with ball hidden before each serve) |
+| `serveTicks` | 60 (1 s pause with every ball hidden before each serve) |
 | `startLives` | 3, `maxLives` 5 |
 | `wallThickness` | 0.04 (capsule: half-thickness 0.02 + ballRadius = collision radius 0.055) |
 | `wallLength` | 0.25 – 0.45 (**path** length, the same for every shape) |
@@ -82,6 +88,7 @@ Math convention: arena is a unit circle centered at (0,0), radius `arenaRadius =
 | `maxPickups` | 2 |
 | `minBallCount` / `maxBallCount` | 1 / 2 — the range `GameConfig.ballCount` accepts (1 = the classic game) |
 | `serveFan` | 0.7 rad between neighbouring balls of a multi-ball serve (wider than the 0.68 rad paddle) |
+| `paddleMinInwardDot` | 0.25 — the shallowest a ball may leave a paddle, so its shortest return chord is `2 × paddleHitRadius × 0.25` |
 | `wallStraightChance` / `wallBentChance` | 0.5 / 0.25; the remaining 0.25 are curved |
 | `wallBentMinAngle` – `wallBentMaxAngle` | 1.75 – 2.6 rad: interior angle of a bent wall's joint (100° – 149°) |
 | `wallCurveMinSweep` – `wallCurveMaxSweep` | 1.05 – 2.6 rad: angle a curved wall sweeps (60° – 149°) |
@@ -114,18 +121,76 @@ velocity about the inward radial normal, then apply "english": rotate the new di
 `-(offset / paddleHalfWidth) * 0.55` rad where `offset = angleDiff(ballAngle, paddle.angle)` (hitting near the paddle
 edge deflects the ball sideways; sign chosen so that the ball is deflected *away* from the paddle edge it hit).
 Then ensure the direction points inward: if `dot(dir, -pos/|pos|) < 0.25`, rotate it toward the inward normal until it is.
-Pull the ball back to `|pos| = paddleRing - 0.02 - ballRadius`. `speed = min(speed * hitSpeedFactor, maxSpeed)`.
+Pull the ball back to `|pos| = paddleRing - 0.02 - ballRadius`. `speed = Simulation.speedAfterHit(config, speed)`
+(**Speed curve** below).
 **One paddle bounce per ball per tick**: each ball bounces at most once per tick and off at most one paddle, but a
 paddle bounces *every* ball that reaches it in the same tick — a paddle the second ball would pass through is not a
 paddle. Both bounces score and both raise the same player's combo. Emit `paddleHit(player, ball)`.
 
-**Serve.** `phase = serving`, `serveTimer = serveTicks`, every ball inactive at (0,0). When the timer hits 0:
-`phase = playing`, every ball active, `speed = min(baseSpeed + 0.01 * (tick / 60), 0.95)` — the same speed for all of
-them. **One** direction is drawn (solo → random angle; duel → toward the receiving player's half: center angle of that
-half ± `rng.nextRange(-0.9, 0.9)`) and the balls are fanned symmetrically around it: ball `i` of `n` leaves along
+**Serve.** `phase = serving`, `serveTimer = serveTicks`, every ball inactive at (0,0) with zero velocity. When the
+timer hits 0: `phase = playing` and
+`speed = min(config.serveBaseSpeed + config.serveSpeedRamp × (tick / 60), config.serveSpeedCap)` — one ball
+`0.55 + 0.01 t` capped at 0.95, two balls `0.42 + 0.003 t` capped at 0.57 — the same speed for all of them. **One**
+direction is drawn (solo → random angle; duel → toward the receiving player's half: center angle of that half ±
+`rng.nextRange(-0.9, 0.9)`) and the balls are fanned symmetrically around it: ball `i` of `n` leaves along
 `angle + (2i − (n − 1)) × serveFan / 2`. With `n == 1` the offset is 0 and the drawn angle is used as-is, so a
 two-ball serve consumes exactly the randomness a one-ball serve consumes. Emit one `serve(receiver)` for the whole
 rally (`ball == -1`).
+
+**Staggered launch.** Only ball 0 becomes active on the serve tick. Every further ball is **queued**: `active = false`,
+parked at (0,0), but with `speed` and `(vx, vy)` already set to what it will leave with, which is what `Ball.queued`
+(`!active && (vx, vy) != (0, 0)`) reports — the two other ways a ball is inactive, the serve pause and game over, both
+leave zero velocity. A queued ball is meant to be **visible**, which is why its velocity is carried
+rather than kept elsewhere: a renderer draws it waiting at the centre, dimmed and aimed along `(vx, vy)`, so the player
+sees the second ball coming instead of having it appear out of nowhere. (The client currently skips every inactive ball,
+so drawing the queued one is a renderer change owed to this rule.) `serveTimer` is then re-armed
+with `config.serveStaggerTicks` (two balls: `twoBallServeStaggerTicks` = 65; one ball: 0, so nothing below applies) and
+counted down through `playing`. At 0 the next queued ball becomes active — before the tick's ball motion, so it flies on
+the tick it is released — and emits its own `serve` event with `ball = i` and `player = -1`; if a further ball is still
+queued the timer re-arms, so any ball count staggers evenly.
+
+Why 65 ticks: one paddle cannot be at two arrival points at once, so the gap is the time the player needs to deal with
+the first ball, and the binding part of that is the first ball itself. Struck at `paddleHitRadius` it must leave with
+`dot(dir, inward) >= paddleMinInwardDot`, so its return chord is at least `2 × 0.905 × 0.25 = 0.4525` units, which at
+`twoBallBaseSpeed` takes `0.4525 / 0.42 = 1.077 s = 64.6` ticks → 65 (1.083 s). Since `2 × 0.25 = 1/2`, that is exactly
+half the serve flight at any serve speed. Inside it fits everything the gap is for: ~0.25 s to read the rebound,
+`serveFan / paddleSpeed = 0.167 s` to cross to the second arrival point and 0.083 s to settle back between the two. The
+gap is always **shorter** than a whole flight (65 ticks against 129 at 0.42 and 95 at 0.57), so the queued ball is out
+before the first one can reach the paddle, let alone escape: a stagger never quietly turns a two-ball rally into a
+one-ball rally.
+
+While a ball is queued the rally is otherwise normal: the live ball moves, bounces, scores, collects and can escape. The
+queued one does not move, collide, collect or escape, and no paddle can hit it — but it is still a ball to the spawn
+rules, which keep walls and pickups 0.2 away from it (the origin, which a wall must clear anyway,
+`wallMinDistFromServePoint`). An escape recalls it with the others and the next serve staggers from scratch; game over
+freezes every ball and clears `serveTimer`.
+
+**Speed curve.** What a paddle hit does to a ball's speed is the one rule the two ball counts answer differently,
+because it is what decides whether a rally ends in play or in arithmetic:
+
+- **One ball** — `min(speed × hitSpeedFactor, maxSpeed)`, unchanged and pinned by the golden hashes: a constant
+  multiplier that runs the speed up to the ceiling in 32 paddle hits (solo) / 30 (duel), and pins it there.
+- **Two balls** — `min(speed + max(twoBallHitGain × (maxSpeed − speed), twoBallHitMinGain), maxSpeed)`: each hit closes
+  9% of the speed still missing to the ceiling, never less than 0.0025 units/s. The rally quickens steeply while it is
+  young (the first hit adds 0.027 u/s, four times what the flat 3.5% would) and then flattens onto a plateau — half the
+  headroom is gone after 8 hits, 85% after 20 — so a long rally is something the player settles into rather than being
+  timed out by. The floor is what makes the ceiling an event instead of an asymptote: it is reached **exactly**, after
+  37 hits, and never passed.
+
+| paddle hits | 5 | 10 | 20 | 40 | 80 | ceiling reached |
+|---|---|---|---|---|---|---|
+| one ball, solo (0.55 → 1.6) | 0.653 | 0.776 | 1.094 | 1.600 | 1.600 | hit 32 |
+| one ball, duel (0.55 → 1.5) | 0.653 | 0.776 | 1.094 | 1.500 | 1.500 | hit 30 |
+| two balls (0.42 → 0.72) | 0.533 | 0.603 | 0.675 | 0.720 | 0.720 | hit 37 |
+
+The two-ball numbers are chosen against the **answer interval**, the mean time between two moments the player has to be
+somewhere: a rebound crosses `2 × 0.905 × cos(theta)` units with `cos(theta) >= 0.25`, which averages 1.33 units, so `n`
+balls at speed `v` ask something every `1.33 / (n v)` seconds. Two balls at 0.42 give 1.58 s (against one ball's 2.42 s
+at 0.55 — two balls are meant to be harder), and at the 0.72 ceiling 0.92 s, which is never tighter than the 0.83 s the
+one-ball game already reaches at 1.6. The ceiling is also the point of the exercise: at 0.72 every rebound geometry is
+still answerable after 0.25 s of human reaction — the worst case, a grazing edge hit, leaves 0.26 s of slack — whereas
+at 1.6 the same sum fails for `theta > 1.17`, about a tenth of the rebound range, which is the "it does not matter what
+I do" the two-ball ceiling exists to avoid.
 
 **Escape.** `|pos| > escapeRadius`: solo → `lives -= 1`, `combo = 0`; duel → the player whose half contains the
 **escaping ball's** angle loses a life (`sin(angle) < 0`, i.e. `y < 0` → player 0 (bottom), else player 1 (top)),
@@ -133,7 +198,19 @@ their combo resets; emit `lifeLost(player, ball)`. The escape ends the rally for
 stops there, so two balls can never cost two lives in one tick and no ball keeps flying while the next serve is
 pending. If that player's lives == 0 → `phase = gameOver`, `winner` (duel) = other player, every ball frozen inactive
 at (0,0) with `speed = 0` and `owner = -1`; emit `gameOver`. Else → serve (in duel, toward the player who lost), which
-recalls every ball to the origin.
+recalls every ball to the origin, including one still queued for its staggered launch.
+
+**The clock.** `maxGameTicks = 216000` (one hour at `tickRate`). At the end of every tick, after `tick += 1` and after
+the solo survival point, a game that is not already over and has reached `tick >= maxGameTicks` ends: same ending as
+running out of lives (`phase = gameOver`, every ball frozen inactive at (0,0), `serveTimer = 0`, emit `gameOver`), with
+`winner` in duel decided by the higher score, then by more lives left, then `-1` for a draw. Checked in **any** phase but
+`gameOver`, so a game sitting between serves when the hour strikes ends too. So a full-hour run has
+`finalTick == maxGameTicks` exactly, which is what `ReplayVerifier.maxTicks` (the same number) accepts.
+
+This is the other half of the two-ball ceiling. Unbounded speed used to guarantee that every run ended; with a ceiling a
+good enough player can rally for ever, and an endless run is an **unscoreable** run — a submission carries its whole
+input log, so it would be both too long to verify inside a request and too large to send. The clock makes the hour a
+finish line instead: survive it and the run ends holding the score it earned.
 
 **Walls.** A wall is an open **polyline**. `points` is a flat `[x0, y0, x1, y1, …]` vertex list, fixed for the wall's
 life, and the ball is collided against the whole chain — one capsule per consecutive pair of vertices, pushed out of
@@ -227,14 +304,20 @@ enum GameEventType { serve, paddleHit, wallHit, pickup, pickupExpire, wallSpawn,
 
 class GameConfig { final GameMode mode; final int seed; final int ballCount;   // 1..2, default 1
   const GameConfig({required this.mode, required this.seed, this.ballCount = minBallCount});
-  int get playerCount; double get maxSpeed; Map<String, dynamic> toJson();
+  int get playerCount; bool get twoBall;               // ballCount > 1: the pace below is the two-ball one (§2.3)
+  double get maxSpeed;                                 // 1.6 / 1.5 with one ball, twoBallMaxSpeed with two
+  double get serveBaseSpeed, serveSpeedRamp, serveSpeedCap;   // the serve speed and its ramp
+  int get serveStaggerTicks;                           // 0 with one ball, twoBallServeStaggerTicks with two
+  Map<String, dynamic> toJson();
   factory GameConfig.fromJson(Map<String, dynamic>);   // FormatException on an unknown mode or a ballCount
 }                                                      // outside minBallCount..maxBallCount; missing 'n' means 1
 
 class GameEvent { final GameEventType type; final int player; /* -1 if none */ final double x, y;
   final PickupType? pickup; final int ball; /* index into GameState.balls, -1 if the event belongs to no one ball */ }
 
-class Ball { double x, y, vx, vy, speed; int owner; bool active; }
+class Ball { double x, y, vx, vy, speed; int owner; bool active;
+  bool get queued;                           // !active with a non-zero velocity: waiting out a staggered serve (§2.3)
+}
 class Paddle { double angle; }
 class Player { int lives, score, combo; Paddle paddle; int get multiplier; }
 class Wall {                                 // an open polyline of >= 2 vertices, collided as a chain of capsules
@@ -255,6 +338,7 @@ class GameState {
   final GameConfig config; int tick; Phase phase; List<Player> players;
   final List<Ball> balls;                   // config.ballCount balls, resolved in index order within a tick (§2.3)
   List<Wall> walls; List<Pickup> pickups; int serveTimer, nextWallIn, nextPickupIn, nextId; int winner; /* -1 */
+  // serveTimer counts down the serve pause and then, while playing, the staggered launch of a queued ball (§2.3).
   Prng rng; final List<GameEvent> events; // filled during step(); cleared at the start of each step()
   factory GameState.initial(GameConfig config);
   void prepareServe(int receiver);          // serving phase, every ball parked at the origin; consumes no randomness
@@ -266,6 +350,7 @@ class GameState {
 }
 
 class Simulation { static void step(GameState s, List<PlayerInput> inputs); /* inputs.length == playerCount */
+  static double speedAfterHit(GameConfig config, double speed);   // the speed curve of §2.3, per ball count
   static List<double> wallPoints(WallShape shape, double cx, cy, angle, length, parameter);  // the vertices (§2.3)
   static double wallDist2(Wall wall, double px, double py);   // squared distance to the polyline
   static int maxWalls(int tick);
@@ -280,7 +365,8 @@ class InputLog {  // delta-encoded per-tick inputs for ONE player
 }
 
 class Replay {
-  static const int version = 2;   // 1 -> 2: wall shapes + ballCount changed the sim, so a v1 replay cannot be
+  static const int version = 3;   // 1 -> 2: wall shapes + ballCount changed the sim; 2 -> 3: the two-ball pace did
+                                  // (own speeds, flattening curve, staggered serve). An older replay cannot be
                                   // re-simulated at all and is refused with `unsupported_version` (update the app)
   final GameConfig config; final List<InputLog> inputs; final int finalTick; final int claimedScore;
   Map<String, dynamic> toJson(); factory Replay.fromJson(Map<String, dynamic>); String encode(); factory Replay.decode(String);
@@ -288,7 +374,7 @@ class Replay {
 
 class ReplayResult { final bool ok; final String? reason; final int score; final int ticks; final int hash; final int lives; }
 class ReplayVerifier {
-  static const int maxTicks = 216000; // 1 hour
+  static const int maxTicks = maxGameTicks; // 216000, one hour: the longest game producible (§2.3)
   static ReplayResult verify(Replay r);   // re-simulates from config.seed (including config.ballCount) applying
                                           // inputs; ok iff phase==gameOver at exactly finalTick (solo),
                                           // finalTick <= maxTicks, and score == claimedScore. Reasons:
@@ -340,22 +426,36 @@ Since wall shapes and ball counts arrived, also:
   index-order precedence, combo and multiplier, spawns clearing every ball, the two-ball snapshot and replay, the
   `FormatException`s on a ball count that cannot be honoured, and long two-ball games staying deterministic through
   `clone()` and a JSON round trip.
+- `two_ball_pace_test.dart` — the **playability** of the two-ball game, which is a different question from its rules:
+  that ball 1 launches exactly `twoBallServeStaggerTicks` after ball 0 at *every* serve (and never with one ball), that
+  a queued ball is aimed, visible and out of play (it moves, collects and escapes nothing, and is recalled by an escape
+  like the rest), that the gap is the derived 65 ticks and shorter than a flight, that a staggered serve is
+  deterministic through `clone()` and JSON, that the two-ball speeds and answer intervals sit where §2.3 says, that the
+  ceiling is answerable after 0.25 s of reaction for every rebound geometry, and the speed tables of §2.3 hit by hit —
+  both ball counts, so a change that moved the wrong one fails here as well as in the golden hashes.
+- `game_clock_test.dart` — the hour (§2.3): that a bot good enough to survive one ball is stopped by the clock on the
+  exact tick with lives to spare, is paid its 3600th survival second, and hands the verifier a replay it **accepts**;
+  that two balls still beat the same bot well before the hour, so the ceiling did not make the hard mode unloseable;
+  that the clock fires in any phase and in a two-ball game; that `gameOver` is emitted exactly once whichever ending
+  arrives, and that the last frame parks every ball; and the duel tie-breaks — score, then lives, then a draw.
 - `tool/det_check.dart` — the cross-backend check, which must print byte-identical output from `dart run`, a native
   executable and `dart compile js` under node. It runs a one-ball duel, a two-ball solo game, a two-ball duel (all
   three report how many straight / bent / curved walls they spawned, so a zero would show the check is not covering
-  shapes) and a grid that bounces a max-speed ball off every shape, orientation, length and shape parameter the game
-  can spawn.
+  shapes), a grid that bounces a max-speed ball off every shape, orientation, length and shape parameter the game
+  can spawn, and a `stagger` run of 42 two-ball serves whose hash is taken *inside* the stagger window — one ball
+  flying, one parked at the origin carrying the velocity it will leave with — and which reports the serve and launch
+  counts, so a backend that dropped a launch fails on the count as well as the hash.
 
 ---
 
 ## 3. Network protocol (WebSocket, JSON text frames, one message per frame)
 
 Endpoint: `ws(s)://HOST/ws`. Room code alphabet `ABCDEFGHJKLMNPQRSTUVWXYZ23456789` (no 0/O/1/I), 4 chars.
-`protocolVersion = 2` (1 → 2 with wall shapes and `ballCount`: the snapshot and the replay shapes both changed, so a v1 client and a v2 server cannot share a simulation). All builders/parsers live in core `lib/src/protocol.dart` (`ClientMsg`, `ServerMsg` sealed
+`protocolVersion = 3` (1 → 2 with wall shapes and `ballCount`; 2 → 3 with the two-ball pace of §2.3, which moved the simulation itself — a client carrying the old physics cannot share a game, or a verified score, with this server and is told to update). All builders/parsers live in core `lib/src/protocol.dart` (`ClientMsg`, `ServerMsg` sealed
 classes with `toJson()` / `parse(Map)`), so the client and server never hand-write message shapes.
 
 Client → Server
-- `{"t":"hello","v":2,"name":"Tymek"}` — must be first (`v` is `protocolVersion`). Name rules as in §4.2.
+- `{"t":"hello","v":3,"name":"Tymek"}` — must be first (`v` is `protocolVersion`). Name rules as in §4.2.
 - `{"t":"create","n":2}` → `room` message. `n` is the **ball count** the room plays with (`GameConfig.ballCount`,
   1..2, §2.3); it is optional and absent means 1, which is what a client that does not know about ball counts is
   asking for and the only game it can draw. A value outside 1..2 (or one that is not an integer) is
