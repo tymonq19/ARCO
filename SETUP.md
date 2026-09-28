@@ -672,6 +672,29 @@ never shows a form.
 - If you turned on ads: watch one and confirm the balance moves, watch a second immediately and confirm there is no
   button, then decline the consent form on a test device and confirm the game is untouched with the ad button gone
   — [money].
+- Play a two-ball game to the end on a real phone. The pace was tuned from a playtest, not from a formula, and
+  nothing in the test suite can tell you whether it *feels* right.
+- After any change to the physics, deploy the server **before** uploading the app, and re-read 12.3a.
+
+### What App Store Connect has rejected before
+
+Both of these came back as an email minutes after a Transporter upload, not as a build error, so they are worth
+checking locally first:
+
+- **91169, "invalid bundle"** — a framework carrying an `IOSSIMULATOR` slice, which happens when release and
+  simulator builds alternate without a clean in between. Unzip the `.ipa` and run `vtool -show-build` over every
+  Mach-O binary in it; nothing may mention the simulator. Build 4 failed on `objective_c.framework`.
+- **90068, deployment target** — every binary, pods included, must be at or above the target in
+  `project.pbxproj` and `ios/Podfile`. `vtool -show-build` prints each one's `minos`.
+
+A clean rebuild is what fixes both: `flutter clean`, then remove `ios/Pods`, `ios/Podfile.lock`,
+`ios/.symlinks`, `build/` and the Runner folders under `~/Library/Developer/Xcode/DerivedData`, then
+`flutter pub get`, `pod install`, `flutter build ipa`.
+
+One thing that looks wrong and is not: the release `.ipa` contains `integration_test.framework` (108 KB).
+Flutter's iOS pod helper installs dev-dependency plugins into every configuration, so this is stock behaviour
+rather than a misconfiguration, and Apple has never objected to it. Restricting it to Debug by hand would risk
+the seven tests under `integration_test/`, which is a worse trade for 108 KB.
 
 ---
 
@@ -713,6 +736,35 @@ answers `{"ok":true,...}` and needs no authentication, so it is safe to poll.
 
 Every `fly deploy` restarts the process, and a room lives in memory, so any duel in progress ends. Solo games
 are unaffected and pending scores retry by themselves. Deploy when nobody is playing.
+
+### 12.3a A simulation change is a protocol change: server first, always
+
+The app and the server run the *same* simulation, verbatim, and that is what makes a score checkable. So any
+change to the physics is also a wire-format change, and `protocolVersion` and `Replay.version` are bumped
+together. A build on the old physics is then told to **update the app** rather than having an honest score
+refused — but it is told that only by a server that has already been deployed.
+
+The order is therefore fixed, and it is not the comfortable one:
+
+1. `fly deploy` the server.
+2. Then build and upload the app.
+
+Between the two, nothing is broken. Deploying first means the *old* app stops working: already-installed
+builds (including anything in TestFlight) get `unsupported_version` on a score and `bad_version` on a duel
+until their tester updates. Building first would mean the *new* app cannot talk to the live server at all,
+which is worse, and would ship a version you could not test against production.
+
+So when a release carries a physics change, expect a window where the old TestFlight build is dead, and tell
+your testers to take the update. `curl https://arco.fly.dev/api/scores` with `"v": <old>` in the body is the
+quick way to confirm which version the live server is on:
+
+```bash
+curl -s -X POST https://arco.fly.dev/api/scores -H 'content-type: application/json' \
+  -d '{"name":"VerCheck","replay":{"v":2,"cfg":{"m":0,"s":1,"n":1},"in":[[[0,33]]],"ft":100,"sc":5}}'
+# {"ok":false,"error":"unsupported_version","detail":"replay version 2, server supports 3"}
+```
+
+That call stores nothing, so it is safe to run against production.
 
 ### 12.4 Support contact and terms
 
