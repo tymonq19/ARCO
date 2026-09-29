@@ -458,13 +458,22 @@ class Strings {
     'onboarding.moreLooks': 'More looks unlock in the shop as you play.',
     // ---------------------------------------------------------- account (4.5)
     'account.title': 'Account',
-    'account.offerTitle': 'Keep this score safe',
+    'account.offerTitle': 'Take on the world',
     'account.offerBody':
-        'Sign in and your scores survive a lost phone — and follow you to any '
-        'device you play on.',
+        'Create an account to put this score on the world board — and keep it '
+        'when you change phone.',
     'account.offerBodyBoard':
-        'Sign in and your place on this board survives a lost phone — and '
-        'follows you to any device you play on.',
+        'Create an account to take your place on the world board — and keep it '
+        'when you change phone.',
+    // The purchase gate (SPEC §4.5, §4.9). Shown once, in front of the payment
+    // sheet, only when signing in is actually on offer. The reason given is the
+    // true one: what is bought is held by the account, so a phone that is lost
+    // or wiped is not a purchase that is lost.
+    'account.gateTitle': 'One step before you pay',
+    'account.gateBody':
+        'The unlock belongs to your account, not to this phone. Create one now '
+        'and it survives a reinstall, a wipe and a new phone. It is the same '
+        'account that puts you on the world board.',
     'account.notNow': 'NOT NOW',
     // Apple's approved wording, which their review checks for; the same form is
     // used for Google, whose branding asks for it too.
@@ -815,13 +824,19 @@ class Strings {
     'onboarding.moreLooks': 'Kolejne motywy odblokujesz w sklepie, grając.',
     // ---------------------------------------------------------- account (4.5)
     'account.title': 'Konto',
-    'account.offerTitle': 'Zachowaj ten wynik',
+    'account.offerTitle': 'Zmierz się ze światem',
     'account.offerBody':
-        'Zaloguj się, a Twoje wyniki przetrwają utratę telefonu — i będą z Tobą '
-        'na każdym urządzeniu.',
+        'Załóż konto, aby wpisać ten wynik na światową tablicę — i zachować go '
+        'przy zmianie telefonu.',
     'account.offerBodyBoard':
-        'Zaloguj się, a Twoje miejsce w tej tablicy przetrwa utratę telefonu — '
-        'i będzie z Tobą na każdym urządzeniu.',
+        'Załóż konto, aby zająć swoje miejsce na światowej tablicy — i zachować '
+        'je przy zmianie telefonu.',
+    // Brama przed zakupem (SPEC §4.5, §4.9).
+    'account.gateTitle': 'Jeden krok przed zapłatą',
+    'account.gateBody':
+        'Odblokowanie należy do Twojego konta, a nie do tego telefonu. Załóż je '
+        'teraz i przetrwa ponowną instalację, wyczyszczenie i nowy telefon. To '
+        'to samo konto, które wpisuje Cię na światową tablicę.',
     'account.notNow': 'NIE TERAZ',
     // Oficjalne brzmienie Apple i Google w języku polskim.
     'account.signInApple': 'Zaloguj się przez Apple',

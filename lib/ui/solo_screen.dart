@@ -665,16 +665,21 @@ class _SoloScreenState extends State<SoloScreen> with WidgetsBindingObserver {
               onPressed: _changeName,
             ),
           ],
-          // The moment the account offer belongs to (SPEC 4.5): right under a
-          // score the player has just beaten their own record with, where
-          // "keep this" answers something they are already thinking. Only
-          // after a personal best, never after an ordinary game, and it draws
-          // nothing at all when there is no sign-in to offer or the player has
-          // already said no.
-          if (_controller.newBest) ...[
-            const SizedBox(height: 16),
-            const AccountOfferCard(),
-          ],
+          // The account offer, under every finished run (SPEC §4.5). Beside the
+          // score is where it belongs: the player is looking at a number they
+          // just earned, so "put this on the world board" answers something they
+          // are already thinking rather than interrupting them with it.
+          //
+          // It used to wait for a personal best. That read as tasteful and cost
+          // most players the invitation entirely, because a first-time player
+          // has no record to beat and the one run they might have wanted on the
+          // board went unasked. Saying no is still what makes this acceptable,
+          // and saying no still works: the first no silences it for a week, the
+          // second for a month, the third for good (see AccountOffer). It also
+          // draws nothing at all when there is no sign-in to offer.
+          // The gap rides on the card's own margin, which is applied only when
+          // it is actually visible, so a build with no sign-in leaves no hole.
+          const AccountOfferCard(margin: EdgeInsets.only(top: 16)),
           // An optional extra on the run just finished (SPEC §4.10): under the
           // result and above Retry, so it reads as something offered rather than
           // something in the way. It is drawn only when an ad is already loaded and

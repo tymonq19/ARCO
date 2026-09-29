@@ -36,6 +36,7 @@ import '../services/native_sign_in.dart';
 import '../services/player_identity.dart';
 import '../services/purchase_service.dart';
 import '../services/shop_service.dart';
+import 'widgets/account_gate.dart';
 import 'widgets/neon_button.dart';
 import 'widgets/neon_panel.dart';
 import 'widgets/shop_card.dart';
@@ -202,6 +203,12 @@ class _ShopScreenState extends State<ShopScreen> with WidgetsBindingObserver {
     final s = Strings.read(context);
     final purchases = context.read<PurchaseService>();
     context.read<AudioService>().play(Sfx.click);
+    // An account first, because the unlock is recorded against a player and a
+    // player with no account lives only in this phone's keychain: a reinstall
+    // would leave somebody who paid holding nothing. Waived when the deployment
+    // offers no sign-in, so this cannot become a shop that refuses money.
+    final mayBuy = await requireAccountToBuy(context);
+    if (!mounted || !mayBuy) return;
     setState(() => _busy = true);
     final report = await purchases.buy(offer.productId);
     if (!mounted) return;

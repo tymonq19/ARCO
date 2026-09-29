@@ -60,7 +60,7 @@ void main() {
       await pumpCard(tester, env);
 
       expect(find.byType(SignInButton), findsNothing);
-      expect(find.text(title(env, 'Keep this score safe')), findsNothing);
+      expect(find.text(title(env, 'Take on the world')), findsNothing);
       // Truly nothing: the card takes no space, so a screen can place it
       // unconditionally.
       expect(tester.getSize(find.byType(AccountOfferCard)), Size.zero);
@@ -210,7 +210,7 @@ void main() {
 
       // The card is exactly as it was: no message, no dismissal, both buttons.
       expect(find.byType(SignInButton), findsNWidgets(2));
-      expect(find.text(title(env, 'Keep this score safe')), findsOneWidget);
+      expect(find.text(title(env, 'Take on the world')), findsOneWidget);
       expect(find.textContaining('did not finish'), findsNothing);
       expect(env.api.linkCalls, 0);
       expect(env.offer.dismissals, 0);
@@ -412,13 +412,17 @@ void main() {
       await pumpFrames(tester, 4);
 
       expect(find.text('NEW BEST!'), findsOneWidget);
-      expect(find.text(title(env, 'Keep this score safe')), findsOneWidget);
+      expect(find.text(title(env, 'Take on the world')), findsOneWidget);
       expect(find.byType(SignInButton), findsNWidgets(2));
 
       await tester.pumpWidget(const SizedBox());
     });
 
-    testWidgets('and not after an ordinary game', (tester) async {
+    testWidgets('after an ordinary game too, not only a best', (tester) async {
+      // The offer used to wait for a personal best. It no longer does, and this
+      // is the case that changed: a run that beats nothing still ends with the
+      // invitation, because a player who has never set a record is exactly the
+      // player who is not yet on the board.
       useTallPhone(tester);
       final env = await envWithAccounts(prefs: const {'bestScore': 9999});
       await tester.pumpWidget(wrapApp(env, const SoloScreen()));
@@ -431,10 +435,13 @@ void main() {
       await pumpFrames(tester, 4);
 
       expect(find.text('GAME OVER'), findsOneWidget);
-      expect(find.text(title(env, 'Keep this score safe')), findsNothing);
-      expect(find.byType(AccountOfferCard), findsNothing);
-      // Nothing was even asked about sign-in.
-      expect(env.api.healthCalls, 0);
+      expect(find.text(title(env, 'Take on the world')), findsOneWidget);
+      expect(find.byType(AccountOfferCard), findsOneWidget);
+      expect(
+        find.text('NOT NOW'),
+        findsOneWidget,
+        reason: 'shown after every game is only acceptable if no still works',
+      );
 
       await tester.pumpWidget(const SizedBox());
     });
@@ -460,7 +467,7 @@ void main() {
       await tester.pump();
 
       expect(
-        find.text(title(env, 'Keep this score safe')),
+        find.text(title(env, 'Take on the world')),
         findsOneWidget,
         reason: 'the player owns a row on the open board',
       );
@@ -500,7 +507,7 @@ void main() {
     env.settings.language = AppLanguage.pl;
     await pumpCard(tester, env);
 
-    expect(find.text(title(env, 'Zachowaj ten wynik')), findsOneWidget);
+    expect(find.text(title(env, 'Zmierz się ze światem')), findsOneWidget);
     expect(find.text('NIE TERAZ'), findsOneWidget);
     expect(
       find.text(const Strings('pl').t('account.offerBody')),

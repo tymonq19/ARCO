@@ -775,6 +775,22 @@ itself is not stored either — only its SHA-256 digest, in the replay ledger be
 - The `POST /api/account/link` body also carries the national standing of §4.6 (`country`, `countryBestScore`,
   `countryRank`), because a merge changes it: the runs of both halves are one player's afterwards.
 
+**Where the app asks.** Two places, and they are different in kind.
+
+- **After every finished solo run**, under the score, and on the leaderboard once the player is on it: an *offer*,
+  headed "take on the world", whose point is the world board rather than safekeeping. It used to wait for a personal
+  best; it no longer does, because a player who has never set a record is exactly the player who is not on the board
+  yet, and that run went unasked. Saying no is what makes asking acceptable, and saying no works: the first no
+  silences it for a week, the second for a month, the third for good. It draws nothing at all when the deployment
+  advertises no providers.
+- **In front of the payment sheet** (§4.9): a *requirement*, the only one in the app. Not for engagement — because
+  the unlock is recorded against a player, and an anonymous player lives only in that phone's keychain, so a
+  reinstall would leave somebody who genuinely paid holding nothing while "Restore purchases" truthfully reported
+  that there was nothing to restore. Three rules keep it from being a wall in front of a till: a player who already
+  has an account is never asked (one account covers the board and the till, in either order); a deployment with no
+  providers waives it entirely, so a shop that cannot offer sign-in still takes money; and declining records nothing,
+  so the next tap asks again. Playing, the shop, Sparks, cosmetics and the leaderboard stay open either way.
+
 **Not done deliberately.** No nonce/challenge binding: it needs a server-issued challenge and a client round trip,
 and the `exp` check plus the replay ledger already bound what a captured token can do. No refresh tokens and no
 provider API calls after sign-in — the identity token is used once to establish who the player is, and the

@@ -14,7 +14,7 @@ Legend: **[play]** needed to play with other people over the internet · **[stor
 | 1. Server online | **done** — https://arco.fly.dev, Frankfurt, volume-backed, snapshots on |
 | 2-5, 8. Developer accounts and sign-in | not started; the app works without them |
 | 6, 7. Store listing, icon | not started |
-| 9, 10. Unlock and ads | not started; both features are built and switched off |
+| 9, 10. Unlock and ads | not started; both built and switched off. **9 needs 8 done first** — see 9.0 |
 | 12.1 Backups | **partly done** — Fly made the volume with scheduled snapshots; a restore has never been rehearsed |
 | 12.2 Monitoring, 12.4 Support page, 12.5 Age rating | not started |
 | 12.6 Code off the laptop | **done** — github.com/tymonq19/ARCO |
@@ -302,6 +302,34 @@ Two halves have to agree: **the stores** decide what it costs, and **our server*
 never appears in our code or in the app — the app prints whatever StoreKit or Google Play hands it, in the player's
 own currency, with their market's tax. Changing the price is a change in App Store Connect or the Play Console and
 nothing else. Aim for the low-mid teens in PLN; pick the tier in the store, not here.
+
+### 9.0 Turn on accounts first — this one is not optional
+
+Do section 8 (sign-in) **before** you turn purchases on, and check `GET /api/health` reports a non-empty
+`accounts` list. This is not tidiness, it is the difference between a purchase that can be recovered and one that
+cannot.
+
+The unlock is recorded against a player. An anonymous player exists only in that phone's keychain, so deleting the
+app destroys it, and the next launch is a different person. The grant is keyed on the store transaction, and a
+transaction already recorded against another player grants nothing to the caller — deliberately, because that is
+what stops a leaked receipt unlocking for a stranger. Put those together and a player who paid, then reinstalled,
+gets "there was nothing to restore" while the database can plainly see that they paid. A refund, a bad review, and
+an argument with App Store review, which expects Restore Purchases to work for a non-consumable.
+
+The app closes this by asking for an account **in front of the payment sheet**, so what is bought belongs to an
+account from the first moment and a reinstall recovers it by signing in again. But that gate **waives itself** when
+the deployment advertises no sign-in providers, because a gate nobody can pass would be a shop that refuses money.
+So:
+
+| accounts | purchases | what happens |
+|---|---|---|
+| off | off | today. Nothing to sell, nothing to lose. |
+| **off** | **on** | **the trap.** Money is taken and cannot be recovered after a reinstall. Do not ship this. |
+| on | off | fine. Players can sign in to keep their board position. |
+| on | on | what you want. |
+
+If you have already sold something in the middle row, the fix for those players is a manual grant against their new
+player id; there is no self-service path and there is deliberately no admin endpoint.
 
 ### 9.1 The product identifier
 
