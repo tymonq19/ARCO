@@ -21,7 +21,7 @@ import '../services/player_identity.dart';
 import '../services/score_submitter.dart';
 import '../services/shop_service.dart';
 import '../services/storage.dart';
-import 'widgets/account_offer_card.dart';
+import 'widgets/account_inline_offer.dart';
 import 'widgets/ball_count_selector.dart';
 import 'widgets/hearts_row.dart';
 import 'widgets/multiplier_badge.dart';
@@ -665,21 +665,24 @@ class _SoloScreenState extends State<SoloScreen> with WidgetsBindingObserver {
               onPressed: _changeName,
             ),
           ],
-          // The account offer, under every finished run (SPEC §4.5). Beside the
-          // score is where it belongs: the player is looking at a number they
-          // just earned, so "put this on the world board" answers something they
-          // are already thinking rather than interrupting them with it.
+          // The account offer, under every finished run (SPEC §4.5), as one line
+          // of the result rather than a panel on top of it. The player is looking
+          // at a number they just earned, so "put this on the world board"
+          // answers something they are already thinking.
           //
-          // It used to wait for a personal best. That read as tasteful and cost
-          // most players the invitation entirely, because a first-time player
-          // has no record to beat and the one run they might have wanted on the
-          // board went unasked. Saying no is still what makes this acceptable,
-          // and saying no still works: the first no silences it for a week, the
-          // second for a month, the third for good (see AccountOffer). It also
-          // draws nothing at all when there is no sign-in to offer.
-          // The gap rides on the card's own margin, which is applied only when
-          // it is actually visible, so a build with no sign-in leaves no hole.
-          const AccountOfferCard(margin: EdgeInsets.only(top: 16)),
+          // One line, every run, permanently — the three go together. It used to
+          // be the full card and only after a personal best, which meant a
+          // first-time player, who has no record to beat and is exactly the
+          // player not yet on the board, was never asked at all. Showing that
+          // card after every game instead would have been nagging, and would
+          // have had to be silenced after a few refusals; a line the eye passes
+          // on the way to RETRY does not, so this one is never silenced and
+          // ignoring it is not even recorded. Nothing is raised by itself:
+          // tapping the line opens the sign-in sheet.
+          //
+          // The gap rides on the widget's own padding, applied only when it is
+          // visible, so a build with no sign-in leaves no hole.
+          const AccountInlineOffer(padding: EdgeInsets.only(top: 12)),
           // An optional extra on the run just finished (SPEC §4.10): under the
           // result and above Retry, so it reads as something offered rather than
           // something in the way. It is drawn only when an ad is already loaded and

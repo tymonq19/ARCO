@@ -458,6 +458,9 @@ class Strings {
     'onboarding.moreLooks': 'More looks unlock in the shop as you play.',
     // ---------------------------------------------------------- account (4.5)
     'account.title': 'Account',
+    // The one line woven into the score screen. Present after every run, never
+    // raised by itself: tapping it is what opens the sign-in sheet.
+    'account.inlineOffer': 'Put this score on the world board',
     'account.offerTitle': 'Take on the world',
     'account.offerBody':
         'Create an account to put this score on the world board — and keep it '
@@ -824,6 +827,7 @@ class Strings {
     'onboarding.moreLooks': 'Kolejne motywy odblokujesz w sklepie, grając.',
     // ---------------------------------------------------------- account (4.5)
     'account.title': 'Konto',
+    'account.inlineOffer': 'Wpisz ten wynik na światową tablicę',
     'account.offerTitle': 'Zmierz się ze światem',
     'account.offerBody':
         'Załóż konto, aby wpisać ten wynik na światową tablicę — i zachować go '

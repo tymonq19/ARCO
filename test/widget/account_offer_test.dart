@@ -5,6 +5,7 @@ import 'package:arco/services/native_sign_in.dart';
 import 'package:arco/services/player_identity.dart';
 import 'package:arco/ui/leaderboard_screen.dart';
 import 'package:arco/ui/solo_screen.dart';
+import 'package:arco/ui/widgets/account_inline_offer.dart';
 import 'package:arco/ui/widgets/account_offer_card.dart';
 import 'package:arco/ui/widgets/sign_in_buttons.dart';
 import 'package:flutter/material.dart';
@@ -15,6 +16,8 @@ import '../helpers/test_env.dart';
 /// The offer to keep a score safe (SPEC §4.5): where it appears, what it shows,
 /// and that saying no is remembered.
 void main() {
+  const en = Strings('en');
+
   Future<TestEnv> envWithAccounts({
     List<String> accounts = const ['apple', 'google'],
     FakeSecretStore? secrets,
@@ -412,8 +415,13 @@ void main() {
       await pumpFrames(tester, 4);
 
       expect(find.text('NEW BEST!'), findsOneWidget);
-      expect(find.text(title(env, 'Take on the world')), findsOneWidget);
-      expect(find.byType(SignInButton), findsNWidgets(2));
+      // One line, not the card: the score screen gets the woven-in offer, so
+      // there is nothing on top of the result and nothing to dismiss before
+      // RETRY. The buttons live in the sheet the line opens.
+      expect(find.byType(AccountInlineOffer), findsOneWidget);
+      expect(find.text(en.t('account.inlineOffer')), findsOneWidget);
+      expect(find.byType(AccountOfferCard), findsNothing);
+      expect(find.byType(SignInButton), findsNothing);
 
       await tester.pumpWidget(const SizedBox());
     });
@@ -435,13 +443,16 @@ void main() {
       await pumpFrames(tester, 4);
 
       expect(find.text('GAME OVER'), findsOneWidget);
+      expect(find.byType(AccountInlineOffer), findsOneWidget);
+      expect(find.text(en.t('account.inlineOffer')), findsOneWidget);
+
+      // And tapping it is what raises the sheet: the buttons are not on the
+      // score screen until the player asks for them.
+      expect(find.byType(SignInButton), findsNothing);
+      await tester.tap(find.text(en.t('account.inlineOffer')));
+      await pumpFrames(tester, 12);
+      expect(find.byType(SignInButton), findsNWidgets(2));
       expect(find.text(title(env, 'Take on the world')), findsOneWidget);
-      expect(find.byType(AccountOfferCard), findsOneWidget);
-      expect(
-        find.text('NOT NOW'),
-        findsOneWidget,
-        reason: 'shown after every game is only acceptable if no still works',
-      );
 
       await tester.pumpWidget(const SizedBox());
     });

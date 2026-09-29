@@ -4,9 +4,9 @@ import 'package:provider/provider.dart';
 import '../../app/game_theme.dart';
 import '../../app/strings.dart';
 import '../../services/account_service.dart';
-import '../../services/api_client.dart';
 import '../../services/native_sign_in.dart';
 import '../../services/player_identity.dart';
+import 'account_gate.dart';
 import 'neon_button.dart';
 import 'neon_panel.dart';
 import 'sign_in_buttons.dart';
@@ -113,7 +113,7 @@ class _AccountOfferCardState extends State<AccountOfferCard> {
             const SizedBox(width: 8),
             Expanded(
               child: Text(
-                _successMessage(s, result),
+                accountOutcomeMessage(s, result),
                 style: TextStyle(color: theme.textPrimary, fontSize: 13),
               ),
             ),
@@ -212,22 +212,4 @@ class _AccountOfferCardState extends State<AccountOfferCard> {
       letterSpacing: theme.headingCase == HeadingCase.upper ? 1.5 : 0.2,
     ),
   );
-
-  String _successMessage(
-    Strings s,
-    SignInSucceeded result,
-  ) => switch (result.outcome) {
-    AccountLinkOutcome.created => s.t('account.outcome.created'),
-    AccountLinkOutcome.restored => s.t('account.outcome.restored'),
-    AccountLinkOutcome.retried => s.t('account.outcome.retried'),
-    // A merge is the one outcome with a number in it: two sets of scores are
-    // one set now, and how many moved is the proof.
-    AccountLinkOutcome.merged when result.movedScores > 0 => s.f(
-      'account.outcome.merged',
-      {'count': result.movedScores},
-    ),
-    AccountLinkOutcome.merged => s.t('account.outcome.linked'),
-    AccountLinkOutcome.linked => s.t('account.outcome.linked'),
-    AccountLinkOutcome.unknown => s.t('account.outcome.linked'),
-  };
 }

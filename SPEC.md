@@ -777,12 +777,17 @@ itself is not stored either — only its SHA-256 digest, in the replay ledger be
 
 **Where the app asks.** Two places, and they are different in kind.
 
-- **After every finished solo run**, under the score, and on the leaderboard once the player is on it: an *offer*,
-  headed "take on the world", whose point is the world board rather than safekeeping. It used to wait for a personal
-  best; it no longer does, because a player who has never set a record is exactly the player who is not on the board
-  yet, and that run went unasked. Saying no is what makes asking acceptable, and saying no works: the first no
-  silences it for a week, the second for a month, the third for good. It draws nothing at all when the deployment
-  advertises no providers.
+- **After every finished solo run**, as **one line** of the result: "put this score on the world board", in the same
+  typography as the "best" line above it, and tapping it is what opens the sign-in sheet. Nothing is laid over the
+  result and there is nothing to dismiss before RETRY. Because it is a line and not a panel it is **never silenced**:
+  every run, the chance is there, and ignoring it costs nothing and is not recorded. It used to be the full card and
+  only after a personal best, which left a first-time player — who has no record to beat, and is exactly the player
+  not on the board yet — never asked at all.
+- **On the leaderboard**, once the player is on it: the fuller *card*, with the provider buttons on it. This one is
+  a panel, so this one does have to stop asking, and does: the first no silences it for a week, the second for a
+  month, the third for good.
+
+  Both draw nothing at all when the deployment advertises no providers.
 - **In front of the payment sheet** (§4.9): a *requirement*, the only one in the app. Not for engagement — because
   the unlock is recorded against a player, and an anonymous player lives only in that phone's keychain, so a
   reinstall would leave somebody who genuinely paid holding nothing while "Restore purchases" truthfully reported
@@ -1187,7 +1192,8 @@ Google's test *application* ids for the same reason (SETUP.md §10).
   "saved locally, will retry" — keep one pending replay in prefs and retry on next app start / leaderboard open),
   RETRY / HOME. On that overlay only, and only when an ad is already loaded and the server says it would pay, an
   optional rewarded ad (§4.10) sits under the result and above RETRY. Never before a game, and never a consent
-  form here.
+  form here. A player with no account gets one line here as well — the world-board offer of §4.5 — which is text,
+  not a panel, and which opens the sign-in sheet only when tapped.
 - **Duel lobby**: nickname; CREATE → big room code + "waiting for a friend…" + share button (share_plus optional —
   clipboard copy is enough); JOIN → 4-char code input (auto-uppercase, alphabet-filtered) → connecting → both present
   → countdown 3-2-1 → game. Errors shown inline. Connection status indicator + measured ping.

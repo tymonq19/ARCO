@@ -32,6 +32,7 @@ import 'package:provider/provider.dart';
 
 import '../../app/game_theme.dart';
 import '../../app/strings.dart';
+import '../../services/api_client.dart';
 import '../../services/account_service.dart';
 import '../../services/native_sign_in.dart';
 import '../../services/player_identity.dart';
@@ -55,19 +56,65 @@ Future<bool> requireAccountToBuy(BuildContext context) async {
   // drawn. This is also today's behaviour, with accounts switched off.
   if (providers.isEmpty) return true;
 
-  final signedIn = await showModalBottomSheet<bool>(
-    context: context,
-    isScrollControlled: true,
-    backgroundColor: Colors.transparent,
-    builder: (_) => _AccountGateSheet(providers: providers),
-  );
-  return signedIn ?? false;
+  return await showAccountSignIn(
+        context,
+        providers: providers,
+        titleKey: 'account.gateTitle',
+        bodyKey: 'account.gateBody',
+      ) !=
+      null;
 }
 
+/// The sign-in sheet, raised by something the player just tapped.
+///
+/// Returns the outcome when they signed in, and null when they backed out. It is
+/// only ever opened by a tap: nothing in the app raises it by itself, which is
+/// the difference between offering an account and interrupting a game with one.
+Future<SignInSucceeded?> showAccountSignIn(
+  BuildContext context, {
+  required List<SignInProvider> providers,
+  required String titleKey,
+  required String bodyKey,
+}) => showModalBottomSheet<SignInSucceeded>(
+  context: context,
+  isScrollControlled: true,
+  backgroundColor: Colors.transparent,
+  builder: (_) => _AccountGateSheet(
+    providers: providers,
+    titleKey: titleKey,
+    bodyKey: bodyKey,
+  ),
+);
+
+/// What to tell the player after a successful sign-in, per outcome (SPEC §4.5).
+///
+/// Shared by every surface that can sign somebody in, so the five outcomes are
+/// worded once. A merge is the one with a number in it: two sets of runs are one
+/// set now, and how many moved is the proof.
+String accountOutcomeMessage(Strings s, SignInSucceeded result) =>
+    switch (result.outcome) {
+      AccountLinkOutcome.created => s.t('account.outcome.created'),
+      AccountLinkOutcome.restored => s.t('account.outcome.restored'),
+      AccountLinkOutcome.retried => s.t('account.outcome.retried'),
+      AccountLinkOutcome.merged when result.movedScores > 0 => s.f(
+        'account.outcome.merged',
+        {'count': result.movedScores},
+      ),
+      AccountLinkOutcome.merged => s.t('account.outcome.linked'),
+      AccountLinkOutcome.linked => s.t('account.outcome.linked'),
+      AccountLinkOutcome.unknown => s.t('account.outcome.linked'),
+    };
+
 class _AccountGateSheet extends StatefulWidget {
-  const _AccountGateSheet({required this.providers});
+  const _AccountGateSheet({
+    required this.providers,
+    required this.titleKey,
+    required this.bodyKey,
+  });
 
   final List<SignInProvider> providers;
+  final String titleKey;
+  final String bodyKey;
 
   @override
   State<_AccountGateSheet> createState() => _AccountGateSheetState();
@@ -88,9 +135,10 @@ class _AccountGateSheetState extends State<_AccountGateSheet> {
     if (!mounted) return;
     switch (result) {
       case SignInSucceeded():
-        // Straight back to the caller, which opens the payment sheet. No
-        // congratulation screen in the way of a person who is trying to pay.
-        Navigator.of(context).pop(true);
+        // Straight back to the caller, which decides what to say. At the till
+        // that is the payment sheet, with no congratulation screen in the way of
+        // a person who is trying to pay.
+        Navigator.of(context).pop(result);
       case SignInCancelled():
         // Cancelling the provider's own sheet is not cancelling the purchase:
         // the gate stays up so another provider can be tried.
@@ -107,10 +155,11 @@ class _AccountGateSheetState extends State<_AccountGateSheet> {
           if (!mounted) return;
           setState(() => _providers = providers);
           if (providers.isEmpty && mounted) {
-            // Every provider turned out to be unavailable, so there is no longer
-            // anything to require. Letting the purchase through is the only
-            // honest answer left.
-            Navigator.of(context).pop(true);
+            // Every provider turned out to be unavailable, so there is nothing
+            // left to ask for. Closing empty-handed is the only honest answer,
+            // and the purchase gate reads that as "no sign-in on offer" and lets
+            // the sale through.
+            Navigator.of(context).pop();
           }
         }
     }
@@ -132,7 +181,7 @@ class _AccountGateSheetState extends State<_AccountGateSheet> {
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: <Widget>[
               Text(
-                theme.heading(s.t('account.gateTitle')),
+                theme.heading(s.t(widget.titleKey)),
                 style: TextStyle(
                   color: theme.textPrimary,
                   fontSize: 15,
@@ -144,7 +193,7 @@ class _AccountGateSheetState extends State<_AccountGateSheet> {
               ),
               const SizedBox(height: 10),
               Text(
-                s.t('account.gateBody'),
+                s.t(widget.bodyKey),
                 style: TextStyle(
                   color: theme.textDim,
                   fontSize: 13,
@@ -199,9 +248,7 @@ class _AccountGateSheetState extends State<_AccountGateSheet> {
                 fontSize: 12,
                 filled: false,
                 color: theme.textDim,
-                onPressed: _busy
-                    ? null
-                    : () => Navigator.of(context).pop(false),
+                onPressed: _busy ? null : () => Navigator.of(context).pop(),
               ),
             ],
           ),
