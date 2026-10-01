@@ -11,8 +11,9 @@
 /// checked any other way, plus three promises about the app that are easiest to
 /// keep by asserting them:
 ///
-/// * **no interstitial, anywhere.** Checked by reading every file in `lib/`: the
-///   only ad class this app may name is the rewarded one.
+/// * **one interstitial, in one place.** Checked by reading every file in `lib/`:
+///   the ad between solo games lives in `interstitial_ads.dart` and nowhere else,
+///   and no banner, app-open or native ad exists at all.
 /// * **the real ad unit ids are never hardcoded.** The only `ca-app-pub-` strings
 ///   in the repository are Google's published *test* ids.
 /// * **nothing outside the shop and the game-over overlay mentions watching an
@@ -44,6 +45,14 @@ void main() {
         AdsConfig.testAndroidRewardedUnit,
         'ca-app-pub-3940256099942544/5224354917',
       );
+      expect(
+        AdsConfig.testIosInterstitialUnit,
+        'ca-app-pub-3940256099942544/4411468910',
+      );
+      expect(
+        AdsConfig.testAndroidInterstitialUnit,
+        'ca-app-pub-3940256099942544/1033173712',
+      );
       expect(AdsConfig.testIosAppId, 'ca-app-pub-3940256099942544~1458002511');
       expect(
         AdsConfig.testAndroidAppId,
@@ -54,6 +63,8 @@ void main() {
       for (final id in <String>[
         AdsConfig.testIosRewardedUnit,
         AdsConfig.testAndroidRewardedUnit,
+        AdsConfig.testIosInterstitialUnit,
+        AdsConfig.testAndroidInterstitialUnit,
         AdsConfig.testIosAppId,
         AdsConfig.testAndroidAppId,
       ]) {
@@ -73,6 +84,7 @@ void main() {
         reason: 'no unit id means no ad button, not a broken one',
       );
       expect(AdsConfig.rewardedUnitId, isNull);
+      expect(AdsConfig.interstitialUnitId, isNull);
     });
 
     test('the real ids are never hardcoded anywhere in lib/', () {
@@ -94,31 +106,35 @@ void main() {
       );
     });
 
-    test('the native manifests hold the test app ids, not an account', () {
-      // The Mobile Ads SDK reads the app id from the platform manifest, so those
-      // two files are the one place a real account id could be committed by
-      // accident. They are checked in with Google's test ids and SETUP.md says to
-      // replace them at deploy time.
+    test('the native manifests hold an app id, never an ad unit', () {
+      // The Mobile Ads SDK reads the app id from the platform manifest and
+      // crashes at start without one, so both files carry Arco's own (they ship
+      // in every copy of the app anyway). What must never be there is an ad
+      // *unit* — `/` instead of `~` — which belongs in a define.
+      final appId = RegExp(r'ca-app-pub-[0-9]{16}~[0-9]{10}');
+      final unit = RegExp(r'ca-app-pub-[0-9]+/');
       final plist = File(
         '${_dir('ios').path}/Runner/Info.plist',
       ).readAsStringSync();
       expect(plist, contains('GADApplicationIdentifier'));
-      expect(plist, contains(AdsConfig.testIosAppId));
+      expect(appId.hasMatch(plist), isTrue);
+      expect(unit.hasMatch(plist), isFalse);
       final manifest = File(
         '${_dir('android').path}/app/src/main/AndroidManifest.xml',
       ).readAsStringSync();
       expect(manifest, contains('com.google.android.gms.ads.APPLICATION_ID'));
-      expect(manifest, contains(AdsConfig.testAndroidAppId));
+      expect(appId.hasMatch(manifest), isTrue);
+      expect(unit.hasMatch(manifest), isFalse);
     });
   });
 
   group('the ad formats', () {
-    test('only rewarded ads are named anywhere in lib/', () {
+    test('rewarded ads, and one interstitial in one file', () {
       // The rule of SPEC §4.10, kept by reading the source rather than by
-      // remembering: never an interstitial, never an app-open ad, never a banner.
-      // Those are ads shown *at* somebody; a rewarded ad is one they asked for.
+      // remembering: never an app-open ad, a banner or a native ad. The one ad
+      // the player does not ask for — between solo games — lives in exactly one
+      // file, under the rules written there.
       const forbidden = <String>[
-        'InterstitialAd',
         'AppOpenAd',
         'BannerAd',
         'AdWidget',
@@ -131,13 +147,17 @@ void main() {
         for (final name in forbidden) {
           if (source.contains(name)) offenders.add('${file.path}: $name');
         }
+        if (source.contains('InterstitialAd.load') &&
+            !file.path.endsWith('services/interstitial_ads.dart')) {
+          offenders.add('${file.path}: InterstitialAd');
+        }
       }
       expect(
         offenders,
         isEmpty,
         reason:
-            'an ad the player did not ask for is not a format this app has; '
-            'adding one needs a new argument, not a new import',
+            'a new ad format, or a second place for the interstitial, needs a '
+            'new argument, not a new import',
       );
     });
 

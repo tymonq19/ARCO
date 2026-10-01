@@ -382,7 +382,7 @@ void main() {
     // anonymous identity of SPEC §4.4, because a wallet needs somebody to belong
     // to.
     final env = await createTestEnv();
-    env.api.accounts = const ['apple', 'google'];
+    env.api.signInMethods = const ['apple', 'google'];
     env.api.profile = PlayerProfile(id: testPlayerId(1), games: 3);
 
     await openShop(tester, env);
@@ -404,7 +404,7 @@ void main() {
   testWidgets('a signed-in player is not asked to sign in', (tester) async {
     useTallPhone(tester);
     final env = await shopEnv();
-    env.api.accounts = const ['apple'];
+    env.api.signInMethods = const ['apple'];
     env.api.profile = PlayerProfile(
       id: testPlayerId(1),
       games: 3,

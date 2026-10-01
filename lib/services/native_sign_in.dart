@@ -1,16 +1,16 @@
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart' show PlatformException;
 import 'package:google_sign_in/google_sign_in.dart';
-import 'package:sign_in_with_apple/sign_in_with_apple.dart';
 
 import '../app/account_config.dart';
 
-/// A sign-in the server accepts (SPEC §4.5). The enum names are exactly the
-/// `provider` strings of `POST /api/account/link` and of `GET /api/health`'s
-/// `accounts`, so no table is needed to translate between them.
-enum SignInProvider { apple, google }
+/// A way of signing in that the server accepts (SPEC §4.5). The enum names are
+/// exactly the method strings of `GET /api/health`'s `firebase` list, so no
+/// table is needed to translate between them.
+enum SignInProvider { apple, google, email }
 
-/// Resolves a provider name the server advertised; null for one this build does
+/// Resolves a method name the server advertised; null for one this build does
 /// not know, which is then simply not offered.
 SignInProvider? signInProviderByName(String name) {
   for (final provider in SignInProvider.values) {
@@ -19,10 +19,26 @@ SignInProvider? signInProviderByName(String name) {
   return null;
 }
 
-/// The provider cannot run on this device at all: an iPhone below iOS 13, an
-/// Android build with no Apple Services ID, a missing Google client id, the web
-/// build. The player is told it is unavailable rather than shown a failure they
-/// could retry forever.
+/// What the player typed into the e-mail form. [create] is a new account rather
+/// than signing in to an existing one.
+class EmailSignIn {
+  const EmailSignIn({
+    required this.email,
+    required this.password,
+    this.create = false,
+  });
+
+  final String email;
+  final String password;
+  final bool create;
+
+  @override
+  String toString() => 'EmailSignIn($email, create: $create)';
+}
+
+/// The provider cannot run on this device at all: an unconfigured build, a
+/// method switched off in the Firebase console, the web build. The player is
+/// told it is unavailable rather than shown a failure they could retry forever.
 class SignInUnavailable implements Exception {
   const SignInUnavailable(this.message);
   final String message;
@@ -30,13 +46,14 @@ class SignInUnavailable implements Exception {
   String toString() => 'SignInUnavailable($message)';
 }
 
-/// The native flow failed for a reason of its own. [code] is the key the UI
-/// shows (`account.error.<code>`); [message] is for the log only and never
-/// carries anything from the token.
+/// The sign-in failed for a reason of its own. [code] is the key the UI shows
+/// (`account.error.<code>`); [message] is for the log only and never carries
+/// anything from the token.
 class SignInFailure implements Exception {
   const SignInFailure(this.code, [this.message = '']);
 
-  /// One of `unknown`, `no_token`, `offline`.
+  /// One of `unknown`, `no_token`, `offline`, `rate_limited`, `email_invalid`,
+  /// `email_wrong`, `email_taken`, `email_weak`, `other_method`, `disabled`.
   final String code;
   final String message;
 
@@ -44,59 +61,83 @@ class SignInFailure implements Exception {
   String toString() => 'SignInFailure($code, $message)';
 }
 
-/// The platform half of signing in: it produces a signed identity token and
-/// nothing else.
+/// The device half of signing in: it signs the player in to Firebase and hands
+/// back the Firebase ID token the server verifies, and nothing else.
 ///
-/// Behind an interface because neither provider can work on a simulator without
-/// configured client ids — and because a test must be able to play a cancel, a
-/// failure and a token without a device (SPEC §4.5).
+/// Behind an interface because none of it can work on a simulator without a
+/// configured Firebase project — and because a test must be able to play a
+/// cancel, a failure and a token without a device (SPEC §4.5).
 abstract class NativeSignIn {
-  /// Whether this device can actually run [provider]'s sheet. Checked before a
-  /// button is shown, so no button is offered that cannot work.
+  /// Whether this device can actually run [provider]. Checked before a button
+  /// is shown, so no button is offered that cannot work.
   Future<bool> isAvailable(SignInProvider provider);
 
-  /// Runs the native sheet and returns the identity token to post to
-  /// `POST /api/account/link`.
+  /// Signs in with [provider] and returns the ID token to post to
+  /// `POST /api/account/link`. [email] is required for [SignInProvider.email]
+  /// and ignored otherwise.
   ///
   /// Returns **null when the player backed out**: a cancelled sign-in is not an
   /// error and must stay silent. Throws [SignInUnavailable] or [SignInFailure]
   /// for everything else.
-  Future<String?> identityToken(SignInProvider provider);
+  Future<String?> identityToken(SignInProvider provider, {EmailSignIn? email});
 
-  /// Forgets the provider's own cached session, so signing in again asks which
+  /// Sends the "reset your password" e-mail. Throws [SignInFailure].
+  Future<void> sendPasswordReset(String email);
+
+  /// Deletes the signed-in user from the sign-in provider itself — which for
+  /// Sign in with Apple also revokes the app's access, as Apple requires of an
+  /// account deletion. Signing in again may be needed first; [askPassword] is
+  /// how an e-mail account's password is asked for when it is.
+  ///
+  /// Returns false when the player backed out of that, and nothing was deleted;
+  /// true when the user is gone, or there was none on this device. Throws
+  /// [SignInFailure].
+  Future<bool> deleteUser({Future<String?> Function()? askPassword});
+
+  /// Signs out of the provider on this device, so signing in again asks which
   /// account to use instead of silently picking the last one. Best effort:
   /// failing to clear it must not fail a sign-out.
   Future<void> forgetSession();
 }
 
-/// [NativeSignIn] over `sign_in_with_apple` and `google_sign_in`.
+/// [NativeSignIn] over Firebase Authentication.
 ///
-/// Both packages are asked for the **identity token only**. No scopes are
-/// requested from Apple and no authorization scopes from Google: the server
-/// stores the provider name and the opaque `sub`, drops the address and the name
-/// the token carries and has no column to put them in (SPEC §4.5), so asking for
-/// them would be collecting data we throw away.
-class PlatformSignIn implements NativeSignIn {
-  PlatformSignIn({
-    Future<bool> Function()? appleAvailable,
+/// Apple goes through Firebase's own provider flow: native on iOS, Apple's web
+/// page hosted by Firebase on Android, so there is no callback endpoint of ours
+/// to run. Google goes through `google_sign_in` and its token is exchanged for a
+/// Firebase session. E-mail is Firebase's password sign-in.
+///
+/// Nothing is asked of Apple or Google beyond identification: no e-mail or name
+/// scopes. The server stores the Firebase uid and drops everything else the
+/// token carries (SPEC §4.5).
+class FirebaseSignIn implements NativeSignIn {
+  FirebaseSignIn({
+    required bool ready,
+    FirebaseAuth? auth,
     GoogleSignIn? google,
     bool? isWeb,
-  }) : _appleAvailable = appleAvailable ?? SignInWithApple.isAvailable,
+  }) : _ready = ready,
+       _authOverride = auth,
        _google = google ?? GoogleSignIn.instance,
        _isWeb = isWeb ?? kIsWeb;
 
-  final Future<bool> Function() _appleAvailable;
+  /// Whether `Firebase.initializeApp` succeeded. False in a build that has no
+  /// Firebase configuration yet, which then offers no sign-in at all.
+  final bool _ready;
+  final FirebaseAuth? _authOverride;
   final GoogleSignIn _google;
   final bool _isWeb;
 
+  /// Read only once Firebase is known to be up: touching the instance before
+  /// `initializeApp` throws.
+  FirebaseAuth get _auth => _authOverride ?? FirebaseAuth.instance;
+
   /// Providers that turned out not to be runnable here after all.
   ///
-  /// Neither SDK can be asked up front whether it is configured: Google's
-  /// `initialize` accepts a build with no client id at all and only the sheet
-  /// itself reports `No active configuration`. So the first attempt that comes
-  /// back [SignInUnavailable] is remembered, and [isAvailable] answers false
-  /// from then on — which is what takes the dead button off the screen instead
-  /// of leaving the player tapping it.
+  /// Google cannot be asked up front whether it is configured: `initialize`
+  /// accepts a build with no client id and only the sheet reports it. So the
+  /// first attempt that comes back [SignInUnavailable] is remembered, and
+  /// [isAvailable] answers false from then on.
   final Set<SignInProvider> _unavailable = <SignInProvider>{};
 
   /// `GoogleSignIn.initialize` has to have completed before `authenticate`, and
@@ -107,78 +148,81 @@ class PlatformSignIn implements NativeSignIn {
   Future<bool> isAvailable(SignInProvider provider) async {
     // The web build keeps no credential (see `KeychainSecretStore`), so an
     // account it signed into would be gone on reload. Nothing is offered there.
-    if (_isWeb) return false;
+    if (_isWeb || !_ready) return false;
     if (_unavailable.contains(provider)) return false;
     switch (provider) {
       case SignInProvider.apple:
-        // Apple is native on iOS 13+/macOS 10.15+. Elsewhere the package opens
-        // Apple's web flow, which needs a Services ID and a Return URL — an
-        // Android build without them is not offered the button.
-        try {
-          if (!await _appleAvailable()) return false;
-        } on Object {
-          return false;
-        }
-        return defaultTargetPlatform == TargetPlatform.iOS ||
-            defaultTargetPlatform == TargetPlatform.macOS ||
-            AccountConfig.appleWebConfigured;
+      case SignInProvider.email:
+        return true;
       case SignInProvider.google:
         try {
           await _initGoogle();
           return _google.supportsAuthenticate();
         } on Object {
-          // No client id configured, or the SDK is missing: not available here.
           return false;
         }
     }
   }
 
   @override
-  Future<String?> identityToken(SignInProvider provider) async {
+  Future<String?> identityToken(
+    SignInProvider provider, {
+    EmailSignIn? email,
+  }) async {
     try {
-      return await switch (provider) {
-        SignInProvider.apple => _appleToken(),
-        SignInProvider.google => _googleToken(),
+      final UserCredential? credential = await switch (provider) {
+        SignInProvider.apple => _signInWithApple(),
+        SignInProvider.google => _signInWithGoogle(),
+        SignInProvider.email => _signInWithEmail(email),
       };
+      if (credential == null) return null;
+      // Forced fresh: a cached token from an earlier sign-in would look like a
+      // retry of that one to the server's replay ledger.
+      final token = await credential.user?.getIdToken(true);
+      if (token == null || token.isEmpty) {
+        throw const SignInFailure('no_token', 'firebase returned no ID token');
+      }
+      return token;
     } on SignInUnavailable {
       _unavailable.add(provider);
       rethrow;
+    } on FirebaseAuthException catch (e) {
+      if (_isCancel(e)) return null;
+      final failure = _failureFor(e);
+      if (failure is SignInUnavailable) _unavailable.add(provider);
+      throw failure;
     }
   }
 
-  Future<String?> _appleToken() async {
-    try {
-      final credential = await SignInWithApple.getAppleIDCredential(
-        // Nothing is asked for beyond identification itself: see the class doc.
-        scopes: const <AppleIDAuthorizationScopes>[],
-        webAuthenticationOptions: AccountConfig.appleWebConfigured
-            ? WebAuthenticationOptions(
-                clientId: AccountConfig.appleServiceId,
-                redirectUri: Uri.parse(AccountConfig.appleRedirectUri),
-              )
-            : null,
-      );
-      final token = credential.identityToken;
-      if (token == null || token.isEmpty) {
-        throw const SignInFailure(
-          'no_token',
-          'apple returned no identityToken',
-        );
-      }
-      return token;
-    } on SignInWithAppleNotSupportedException catch (e) {
-      throw SignInUnavailable(e.message);
-    } on SignInWithAppleAuthorizationException catch (e) {
-      // A cancel is the player saying no. It is not an error, nothing is shown
-      // and the offer is left exactly as it was.
-      if (e.code == AuthorizationErrorCode.canceled) return null;
-      throw SignInFailure('unknown', '${e.code}');
-    } on SignInWithAppleException catch (e) {
-      throw SignInFailure('unknown', '$e');
-    }
+  Future<UserCredential?> _signInWithApple() =>
+      _auth.signInWithProvider(AppleAuthProvider());
+
+  Future<UserCredential?> _signInWithGoogle() async {
+    final idToken = await _googleIdToken();
+    if (idToken == null) return null;
+    return _auth.signInWithCredential(
+      GoogleAuthProvider.credential(idToken: idToken),
+    );
   }
 
-  Future<String?> _googleToken() async {
+  Future<UserCredential> _signInWithEmail(EmailSignIn? form) {
+    if (form == null) {
+      throw ArgumentError('an e-mail sign-in needs the address and password');
+    }
+    final email = form.email.trim();
+    return form.create
+        ? _auth.createUserWithEmailAndPassword(
+            email: email,
+            password: form.password,
+          )
+        : _auth.signInWithEmailAndPassword(
+            email: email,
+            password: form.password,
+          );
+  }
+
+  /// Google's ID token from its own sheet, or null when the player backed out.
+  Future<String?> _googleIdToken() async {
     try {
       await _initGoogle();
       final account = await _google.authenticate();
@@ -207,9 +251,8 @@ class PlatformSignIn implements NativeSignIn {
     } on PlatformException catch (e) {
       // The native side could not even start: on iOS a build with neither
       // `GIDClientID` in `Info.plist` nor `--dart-define=GOOGLE_CLIENT_ID`
-      // raises `No active configuration` here, and `initialize` accepted it
-      // without a word. It is not something the player can retry, so it is
-      // reported as unavailable and the button goes (see [_unavailable]).
+      // raises `No active configuration` here. Not something the player can
+      // retry, so it is reported as unavailable and the button goes.
       throw SignInUnavailable('${e.code}: ${e.message}');
     }
   }
@@ -227,12 +270,134 @@ class PlatformSignIn implements NativeSignIn {
       });
 
   @override
+  Future<void> sendPasswordReset(String email) async {
+    if (!_ready) throw const SignInFailure('unknown', 'firebase is not up');
+    try {
+      await _auth.sendPasswordResetEmail(email: email.trim());
+    } on FirebaseAuthException catch (e) {
+      // Saying "no such account" would tell anyone which addresses play here.
+      if (e.code == 'user-not-found') return;
+      final failure = _failureFor(e);
+      throw failure is SignInFailure ? failure : SignInFailure('unknown');
+    }
+  }
+
+  @override
+  Future<bool> deleteUser({Future<String?> Function()? askPassword}) async {
+    if (!_ready) return true;
+    final user = _auth.currentUser;
+    if (user == null) return true;
+    final methods = {for (final info in user.providerData) info.providerId};
+    try {
+      if (methods.contains('apple.com')) {
+        // Apple requires the app's access to be revoked when the account goes,
+        // and revoking needs a fresh authorization code — which only signing in
+        // again produces. It doubles as the recent sign-in Firebase wants.
+        final fresh = await user.reauthenticateWithProvider(
+          AppleAuthProvider(),
+        );
+        final code = fresh.additionalUserInfo?.authorizationCode;
+        if (code != null) {
+          await _auth.revokeTokenWithAuthorizationCode(code);
+        }
+        await user.delete();
+      } else {
+        try {
+          await user.delete();
+        } on FirebaseAuthException catch (e) {
+          if (e.code != 'requires-recent-login') rethrow;
+          if (!await _reauthenticate(user, methods, askPassword)) return false;
+          await user.delete();
+        }
+      }
+    } on FirebaseAuthException catch (e) {
+      if (_isCancel(e)) return false;
+      final failure = _failureFor(e);
+      throw failure is SignInFailure ? failure : SignInFailure('unknown');
+    }
+    await _signOutGoogle();
+    return true;
+  }
+
+  /// Signs [user] in again so Firebase lets it be deleted; false when the
+  /// player backed out.
+  Future<bool> _reauthenticate(
+    User user,
+    Set<String> methods,
+    Future<String?> Function()? askPassword,
+  ) async {
+    if (methods.contains('google.com')) {
+      final idToken = await _googleIdToken();
+      if (idToken == null) return false;
+      await user.reauthenticateWithCredential(
+        GoogleAuthProvider.credential(idToken: idToken),
+      );
+      return true;
+    }
+    final email = user.email;
+    if (methods.contains('password') && email != null && askPassword != null) {
+      final password = await askPassword();
+      if (password == null || password.isEmpty) return false;
+      await user.reauthenticateWithCredential(
+        EmailAuthProvider.credential(email: email, password: password),
+      );
+      return true;
+    }
+    throw const SignInFailure('unknown', 'no way to sign in again');
+  }
+
+  @override
   Future<void> forgetSession() async {
+    if (_ready) {
+      try {
+        await _auth.signOut();
+      } on Object {
+        // A Firebase that will not sign out must not fail a local sign-out.
+      }
+    }
+    await _signOutGoogle();
+  }
+
+  Future<void> _signOutGoogle() async {
     try {
       await _google.signOut();
     } on Object {
-      // Apple has nothing to clear (the credential lives in the system), and a
-      // Google SDK that will not sign out must not fail a local sign-out.
+      // Nothing to clear, or an SDK that will not: neither is the player's
+      // problem.
     }
   }
+
+  /// The player closed the sheet. Apple's native sheet and the web flow on
+  /// Android report it under different codes.
+  static bool _isCancel(FirebaseAuthException e) =>
+      const {
+        'canceled',
+        'cancelled',
+        'web-context-canceled',
+        'web-context-cancelled',
+        'user-cancelled',
+        'popup-closed-by-user',
+      }.contains(e.code) ||
+      // ASAuthorizationError.canceled, when it comes through untranslated.
+      (e.message?.contains('1001') ?? false);
+
+  /// What a Firebase refusal means to the player.
+  static Exception _failureFor(FirebaseAuthException e) => switch (e.code) {
+    'network-request-failed' => SignInFailure('offline', e.code),
+    'too-many-requests' => SignInFailure('rate_limited', e.code),
+    'invalid-email' => SignInFailure('email_invalid', e.code),
+    'user-not-found' ||
+    'wrong-password' ||
+    'invalid-credential' ||
+    'INVALID_LOGIN_CREDENTIALS' => SignInFailure('email_wrong', e.code),
+    'email-already-in-use' => SignInFailure('email_taken', e.code),
+    'weak-password' => SignInFailure('email_weak', e.code),
+    'account-exists-with-different-credential' => SignInFailure(
+      'other_method',
+      e.code,
+    ),
+    'user-disabled' => SignInFailure('disabled', e.code),
+    'operation-not-allowed' => SignInUnavailable(e.code),
+    _ => SignInFailure('unknown', e.code),
+  };
 }

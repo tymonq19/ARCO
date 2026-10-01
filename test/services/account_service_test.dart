@@ -15,7 +15,7 @@ void main() {
   group('which providers are offered', () {
     test('a deployment that advertises none is offered none', () async {
       final env = await createTestEnv();
-      expect(env.api.accounts, isEmpty);
+      expect(env.api.signInMethods, isEmpty);
       expect(await env.accounts.providers(), isEmpty);
       expect(env.accounts.knownUnavailable, isTrue);
       // Nothing was asked of the providers themselves.
@@ -24,7 +24,7 @@ void main() {
 
     test('only the advertised ones are offered', () async {
       final env = await createTestEnv();
-      env.api.accounts = const ['google'];
+      env.api.signInMethods = const ['google'];
       expect(await env.accounts.providers(), [SignInProvider.google]);
     });
 
@@ -32,7 +32,7 @@ void main() {
       final env = await createTestEnv(platform: TargetPlatform.iOS);
       // Advertised the other way round on purpose: the order is ours, not the
       // server's — App Store review wants Sign in with Apple beside Google.
-      env.api.accounts = const ['google', 'apple'];
+      env.api.signInMethods = const ['google', 'apple'];
       expect(await env.accounts.providers(), [
         SignInProvider.apple,
         SignInProvider.google,
@@ -41,24 +41,32 @@ void main() {
 
     test('Google comes first elsewhere', () async {
       final env = await createTestEnv(platform: TargetPlatform.android);
-      env.api.accounts = const ['apple', 'google'];
+      env.api.signInMethods = const ['apple', 'google'];
       expect(await env.accounts.providers(), [
         SignInProvider.google,
         SignInProvider.apple,
       ]);
     });
 
+    test('e-mail comes last everywhere', () async {
+      for (final platform in [TargetPlatform.iOS, TargetPlatform.android]) {
+        final env = await createTestEnv(platform: platform);
+        env.api.signInMethods = const ['email', 'apple', 'google'];
+        expect((await env.accounts.providers()).last, SignInProvider.email);
+      }
+    });
+
     test('a provider this device cannot run is not offered', () async {
       final env = await createTestEnv(
         native: FakeNativeSignIn(available: {SignInProvider.google}),
       );
-      env.api.accounts = const ['apple', 'google'];
+      env.api.signInMethods = const ['apple', 'google'];
       expect(await env.accounts.providers(), [SignInProvider.google]);
     });
 
     test('a provider name this build has never heard of is ignored', () async {
       final env = await createTestEnv();
-      env.api.accounts = const ['facebook', 'apple'];
+      env.api.signInMethods = const ['facebook', 'apple'];
       expect(await env.accounts.providers(), [SignInProvider.apple]);
     });
 
@@ -66,7 +74,7 @@ void main() {
         'is not even asked about', () async {
       final env = await createTestEnv(
         secrets: FakeSecretStore(failing: true),
-        api: FakeApiClient()..accounts = const ['apple'],
+        api: FakeApiClient()..signInMethods = const ['apple'],
       );
       expect(await env.accounts.providers(), isEmpty);
       expect(env.api.healthCalls, 0);
@@ -84,7 +92,7 @@ void main() {
 
     test('the list is read once and reused', () async {
       final env = await createTestEnv();
-      env.api.accounts = const ['apple'];
+      env.api.signInMethods = const ['apple'];
       await env.accounts.providers();
       await env.accounts.providers();
       expect(env.api.healthCalls, 1);
@@ -95,7 +103,7 @@ void main() {
 
     test('concurrent readers share one health call', () async {
       final env = await createTestEnv();
-      env.api.accounts = const ['apple'];
+      env.api.signInMethods = const ['apple'];
       await Future.wait([
         env.accounts.providers(),
         env.accounts.providers(),
@@ -109,13 +117,13 @@ void main() {
     test('an anonymous device creates the account and stores the credential '
         'it was handed', () async {
       final env = await createTestEnv();
-      env.api.accounts = const ['apple'];
+      env.api.signInMethods = const ['apple'];
 
       final result = await env.accounts.signIn(SignInProvider.apple);
 
       expect(result, isA<SignInSucceeded>());
       expect((result as SignInSucceeded).outcome, AccountLinkOutcome.created);
-      expect(env.api.linkProviders, ['apple']);
+      expect(env.api.linkProviders, ['firebase']);
       expect(env.api.linkTokens, ['header.payload.signature']);
       // No credential existed, so none was sent — and none was issued first.
       expect(env.api.linkCredentials, [null]);
@@ -134,7 +142,7 @@ void main() {
       final env = await createTestEnv(
         secrets: FakeSecretStore.withCredentials(testCredentials(1)),
       );
-      env.api.accounts = const ['apple'];
+      env.api.signInMethods = const ['apple'];
 
       final result = await env.accounts.signIn(SignInProvider.apple);
 
@@ -220,7 +228,7 @@ void main() {
         // player is left tapping a button that can never work.
         final native = FakeNativeSignIn();
         final env = await createTestEnv(native: native);
-        env.api.accounts = const ['apple', 'google'];
+        env.api.signInMethods = const ['apple', 'google'];
         expect(await env.accounts.providers(), hasLength(2));
         expect(env.api.healthCalls, 1);
 
@@ -373,21 +381,119 @@ void main() {
     });
   });
 
+  group('signing in with e-mail', () {
+    test('hands the form to the sign-in and links what it returns', () async {
+      final env = await createTestEnv();
+      env.api.signInMethods = const ['email'];
+      env.api.linkMethod = 'email';
+
+      final result = await env.accounts.signIn(
+        SignInProvider.email,
+        email: const EmailSignIn(
+          email: 'ada@example.com',
+          password: 'secret1',
+          create: true,
+        ),
+      );
+
+      expect(result, isA<SignInSucceeded>());
+      expect((result as SignInSucceeded).provider, 'email');
+      expect(env.native.emailForms.single.email, 'ada@example.com');
+      expect(env.native.emailForms.single.create, isTrue);
+      expect(env.api.linkProviders, ['firebase']);
+      expect(env.storage.signInMethod, 'email');
+    });
+
+    test('a wrong password is a failure with its own sentence', () async {
+      final env = await createTestEnv();
+      env.native.failure = 'email_wrong';
+      final result = await env.accounts.signIn(
+        SignInProvider.email,
+        email: const EmailSignIn(email: 'ada@example.com', password: 'nope'),
+      );
+      expect((result as SignInFailed).code, 'email_wrong');
+      expect(env.api.linkCalls, 0);
+    });
+
+    test('a password reset reports whether it went', () async {
+      final env = await createTestEnv();
+      expect(await env.accounts.sendPasswordReset('ada@example.com'), isNull);
+      expect(env.native.resets, ['ada@example.com']);
+      env.native.resetFailure = 'offline';
+      expect(
+        await env.accounts.sendPasswordReset('ada@example.com'),
+        'offline',
+      );
+    });
+
+    test('signing out forgets how this device signed in', () async {
+      final env = await createTestEnv();
+      await env.accounts.signIn(SignInProvider.apple);
+      expect(env.storage.signInMethod, 'apple');
+      await env.accounts.signOutOnThisDevice();
+      expect(env.storage.signInMethod, isNull);
+    });
+  });
+
   group('deleting the account', () {
+    test('deletes the sign-in user before the player', () async {
+      final env = await createTestEnv(
+        secrets: FakeSecretStore.withCredentials(testCredentials(1)),
+      );
+      final result = await env.accounts.deleteAccount();
+      expect(result, isA<DeleteSucceeded>());
+      expect(env.native.deleteUserCalls, 1);
+      expect(env.api.deletePlayerCalls, 1);
+    });
+
+    test('backing out of signing in again deletes nothing', () async {
+      final env = await createTestEnv(
+        secrets: FakeSecretStore.withCredentials(testCredentials(1)),
+      );
+      env.native.deleteUserCancels = true;
+      final result = await env.accounts.deleteAccount();
+      expect(result, isA<DeleteCancelled>());
+      expect(env.api.deletePlayerCalls, 0);
+      // The credential is still in the keychain: this phone is still the player.
+      expect(env.secrets.values, isNotEmpty);
+    });
+
+    test('a refused sign-in user deletion leaves the player alone', () async {
+      final env = await createTestEnv(
+        secrets: FakeSecretStore.withCredentials(testCredentials(1)),
+      );
+      env.native.deleteUserFailure = 'offline';
+      final result = await env.accounts.deleteAccount();
+      expect((result as DeleteFailed).code, 'offline');
+      expect(env.api.deletePlayerCalls, 0);
+    });
+
+    test('an e-mail account is asked for its password', () async {
+      final env = await createTestEnv(
+        secrets: FakeSecretStore.withCredentials(testCredentials(1)),
+      );
+      env.native.deleteAsksPassword = true;
+      final result = await env.accounts.deleteAccount(
+        askPassword: () async => 'secret1',
+      );
+      expect(result, isA<DeleteSucceeded>());
+      expect(env.native.passwordsGiven, ['secret1']);
+    });
+
     test('calls the server and clears everything local', () async {
       final env = await createTestEnv(
         secrets: FakeSecretStore.withCredentials(testCredentials(1)),
       );
-      env.api.scoresAnonymised = 4;
+      env.api.scoresDeleted = 4;
       await env.storage.addOwnScore(id: 'id-1', name: 'Tester', score: 10);
 
       final result = await env.accounts.deleteAccount();
 
-      expect((result as DeleteSucceeded).scoresAnonymised, 4);
+      expect((result as DeleteSucceeded).scoresDeleted, 4);
       expect(env.api.deletePlayerCalls, 1);
       expect(env.identity.isIdentified, isFalse);
       expect(env.secrets.values, isEmpty);
-      // The rows stay on the board; this phone stops claiming them.
+      // The rows are gone from the board; this phone stops claiming them.
       expect(env.storage.isOwnScore(name: 'Tester', score: 10), isFalse);
       expect(env.offer.silenced, isTrue);
     });

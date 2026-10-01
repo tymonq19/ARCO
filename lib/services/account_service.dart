@@ -27,7 +27,10 @@ class SignInSucceeded extends SignInResult {
 
   AccountLinkOutcome get outcome => link.outcome;
   int get movedScores => link.movedScores;
-  String get provider => link.provider;
+
+  /// How the player signed in (`apple`, `google`, `email`), falling back to the
+  /// provider the server named.
+  String get provider => link.method ?? link.provider;
 }
 
 /// The attempt failed. [code] is the message key (`account.error.<code>`) and
@@ -46,11 +49,17 @@ sealed class DeleteResult {
 }
 
 /// The player is gone server side and nothing on this device points at it any
-/// more. [scoresAnonymised] is how many verified runs stayed on the board
-/// without an owner (SPEC §4.5).
+/// more. [scoresDeleted] is how many of its runs left the leaderboard with it
+/// (SPEC §4.5).
 class DeleteSucceeded extends DeleteResult {
-  const DeleteSucceeded(this.scoresAnonymised);
-  final int scoresAnonymised;
+  const DeleteSucceeded(this.scoresDeleted);
+  final int scoresDeleted;
+}
+
+/// The player backed out of signing in again, which deleting a sign-in account
+/// can need. Nothing was deleted anywhere.
+class DeleteCancelled extends DeleteResult {
+  const DeleteCancelled();
 }
 
 class DeleteFailed extends DeleteResult {
@@ -58,8 +67,8 @@ class DeleteFailed extends DeleteResult {
   final String code;
 }
 
-/// Signing in with Apple or Google, and everything that follows from it
-/// (SPEC §4.5).
+/// Signing in — with Apple, Google or an e-mail address, through Firebase — and
+/// everything that follows from it (SPEC §4.5).
 ///
 /// It owns three decisions and no widgets:
 /// * **which buttons exist at all** — the intersection of what the deployment
@@ -70,6 +79,10 @@ class DeleteFailed extends DeleteResult {
 ///   different surviving player;
 /// * **when to stop offering** — see [AccountOffer].
 class AccountService {
+  /// The provider every sign-in of this build is linked under: Firebase hands
+  /// the app one kind of token for Apple, Google and e-mail alike.
+  static const String firebaseProvider = 'firebase';
+
   AccountService({
     required this.api,
     required this.identity,
@@ -114,7 +127,7 @@ class AccountService {
 
   /// The providers to offer, in the order to show them.
   ///
-  /// `GET /api/health`'s `accounts` is the authority on what the server accepts
+  /// `GET /api/health`'s `firebase` is the authority on what the server accepts
   /// (SPEC §4.5) — an empty list means the whole feature is off and **nothing**
   /// is shown, no dead buttons. Each advertised provider is then asked whether
   /// it can run on this device at all.
@@ -148,7 +161,7 @@ class AccountService {
     }
     final List<String> advertised;
     try {
-      advertised = (await api.health()).accounts;
+      advertised = (await api.health()).firebase;
     } on ApiException {
       return _providers ?? const <SignInProvider>[];
     }
@@ -167,7 +180,8 @@ class AccountService {
   /// in with Apple to be offered wherever another third-party sign-in is, and
   /// the order is the cheapest way to make it the equal of the other one.
   /// Elsewhere Google leads, because that is the sign-in an Android player
-  /// expects first.
+  /// expects first. E-mail is last everywhere: it is the one that asks the
+  /// player to type.
   List<SignInProvider> _ordered(List<String> advertised) {
     final known = <SignInProvider>[
       for (final name in advertised) ?signInProviderByName(name),
@@ -176,23 +190,35 @@ class AccountService {
     final appleFirst =
         platform == TargetPlatform.iOS || platform == TargetPlatform.macOS;
     final order = appleFirst
-        ? const [SignInProvider.apple, SignInProvider.google]
-        : const [SignInProvider.google, SignInProvider.apple];
+        ? const [
+            SignInProvider.apple,
+            SignInProvider.google,
+            SignInProvider.email,
+          ]
+        : const [
+            SignInProvider.google,
+            SignInProvider.apple,
+            SignInProvider.email,
+          ];
     return <SignInProvider>[
       for (final provider in order)
         if (known.contains(provider)) provider,
     ];
   }
 
-  /// Runs [provider]'s native sheet and links what it returns (SPEC §4.5).
+  /// Signs in with [provider] and links the account it proves (SPEC §4.5).
+  /// [email] is what the player typed, for [SignInProvider.email].
   ///
   /// The identity token is posted with whatever credential this device already
   /// holds, and is **never** posted with one we just issued: issuing first would
   /// create an empty player and then immediately merge it away.
-  Future<SignInResult> signIn(SignInProvider provider) async {
+  Future<SignInResult> signIn(
+    SignInProvider provider, {
+    EmailSignIn? email,
+  }) async {
     final String? token;
     try {
-      token = await native.identityToken(provider);
+      token = await native.identityToken(provider, email: email);
     } on SignInUnavailable {
       // This device cannot run that sheet after all, which only the attempt
       // could establish. Drop the cached list so the next screen asks again and
@@ -211,7 +237,7 @@ class AccountService {
     // Reads the stored credential; deliberately does not issue one.
     final stored = await identity.load();
     try {
-      return await _link(provider, token, stored);
+      return await _link(token, stored);
     } on ApiException catch (e) {
       // The credential we sent is not usable and nothing was stored (SPEC §4.4
       // fails closed here too). The token is still good and the ledger pins the
@@ -221,7 +247,7 @@ class AccountService {
       if (stored != null && e.errorCode == invalidCredentialsError) {
         await identity.forget();
         try {
-          return await _link(provider, token, null);
+          return await _link(token, null);
         } on ApiException catch (retry) {
           return SignInFailed(_codeFor(retry), detail: retry.detail);
         }
@@ -231,15 +257,15 @@ class AccountService {
   }
 
   Future<SignInResult> _link(
-    SignInProvider provider,
     String token,
     PlayerCredentials? credentials,
   ) async {
     final link = await api.linkAccount(
-      provider: provider.name,
+      provider: firebaseProvider,
       idToken: token,
       credentials: credentials,
     );
+    await storage.setSignInMethod(link.method);
     // Both halves at once: a link always issues a new credential, and on a merge
     // the surviving player may be a different id than the one we sent.
     await identity.adopt(link.credentials);
@@ -260,18 +286,49 @@ class AccountService {
   Future<void> signOutOnThisDevice() async {
     await native.forgetSession();
     await identity.forget();
+    await storage.setSignInMethod(null);
     // A deliberate sign-out is the clearest "no" there is; do not come back with
     // the offer on the next personal best.
     await offer.silenceForever();
   }
 
-  /// `DELETE /api/players/me` (SPEC §4.5), then everything local that pointed at
-  /// that player.
+  /// Sends the "reset your password" e-mail; null when it went, otherwise the
+  /// message key of what stopped it.
+  Future<String?> sendPasswordReset(String email) async {
+    try {
+      await native.sendPasswordReset(email);
+      return null;
+    } on SignInFailure catch (e) {
+      return e.code;
+    } on Object {
+      return 'unknown';
+    }
+  }
+
+  /// Deletes the account: the sign-in user first, then `DELETE /api/players/me`
+  /// (SPEC §4.5), then everything local that pointed at that player.
   ///
-  /// The score rows themselves stay on the leaderboard as anonymous runs — a
-  /// verified run is a fact about the board, and deleting rows would restate
-  /// everybody else's rank. What goes is every link between the person and them.
-  Future<DeleteResult> deleteAccount() async {
+  /// The sign-in user goes first because it is the step the player can back
+  /// out of — Firebase may want them to sign in again, and Apple always does,
+  /// to revoke the app's access. Backing out leaves everything as it was. Once
+  /// that user is gone, a failure of the server call is simply retried: there
+  /// is no user left to delete on the second attempt. [askPassword] asks for an
+  /// e-mail account's password when Firebase wants a fresh sign-in.
+  ///
+  /// The player's runs go too: each one carries the name it was played under,
+  /// so leaving them would keep that name on the board.
+  Future<DeleteResult> deleteAccount({
+    Future<String?> Function()? askPassword,
+  }) async {
+    try {
+      if (!await native.deleteUser(askPassword: askPassword)) {
+        return const DeleteCancelled();
+      }
+    } on SignInFailure catch (e) {
+      return DeleteFailed(e.code);
+    } on Object {
+      return const DeleteFailed('unknown');
+    }
     final credentials = await identity.load();
     if (credentials == null) {
       // Nothing was ever issued, so there is nothing server side to delete; the
@@ -280,9 +337,9 @@ class AccountService {
       return const DeleteSucceeded(0);
     }
     try {
-      final anonymised = await api.deletePlayer(credentials);
+      final deleted = await api.deletePlayer(credentials);
       await _forgetLocally();
-      return DeleteSucceeded(anonymised);
+      return DeleteSucceeded(deleted);
     } on ApiException catch (e) {
       // Already gone (a second tap, another device got there first): the player
       // does not exist, which is the state that was asked for.
@@ -297,6 +354,7 @@ class AccountService {
   Future<void> _forgetLocally() async {
     await native.forgetSession();
     await identity.forget();
+    await storage.setSignInMethod(null);
     await storage.forgetOwnScores();
     await offer.silenceForever();
   }

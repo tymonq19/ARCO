@@ -36,6 +36,7 @@ import '../../services/api_client.dart';
 import '../../services/account_service.dart';
 import '../../services/native_sign_in.dart';
 import '../../services/player_identity.dart';
+import 'email_sign_in.dart';
 import 'neon_button.dart';
 import 'neon_panel.dart';
 import 'sign_in_buttons.dart';
@@ -127,11 +128,12 @@ class _AccountGateSheetState extends State<_AccountGateSheet> {
 
   Future<void> _signIn(SignInProvider provider) async {
     setState(() {
-      _busy = true;
+      // The e-mail form shows its own progress; this one would spin behind it.
+      _busy = provider != SignInProvider.email;
       _failure = null;
     });
     final service = context.read<AccountService>();
-    final result = await service.signIn(provider);
+    final result = await runSignIn(context, provider);
     if (!mounted) return;
     switch (result) {
       case SignInSucceeded():

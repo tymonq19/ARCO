@@ -37,6 +37,19 @@ abstract final class AdsConfig {
     'ADMOB_ANDROID_REWARDED_UNIT',
   );
 
+  /// The real iOS interstitial unit — the ad between solo games, see
+  /// `interstitial_ads.dart` — from
+  /// `--dart-define=ADMOB_IOS_INTERSTITIAL_UNIT=ca-app-pub-…/…`.
+  static const String iosInterstitialUnit = String.fromEnvironment(
+    'ADMOB_IOS_INTERSTITIAL_UNIT',
+  );
+
+  /// The real Android interstitial unit, from
+  /// `--dart-define=ADMOB_ANDROID_INTERSTITIAL_UNIT=ca-app-pub-…/…`.
+  static const String androidInterstitialUnit = String.fromEnvironment(
+    'ADMOB_ANDROID_INTERSTITIAL_UNIT',
+  );
+
   /// `--dart-define=ADMOB_TEST_ADS=on` (or `true`).
   ///
   /// Accepts both spellings because the server's switches are `on`/`off` and
@@ -63,6 +76,12 @@ abstract final class AdsConfig {
   static const String testAndroidRewardedUnit =
       'ca-app-pub-3940256099942544/5224354917';
 
+  /// Google's published test **interstitial** units, from the same pages.
+  static const String testIosInterstitialUnit =
+      'ca-app-pub-3940256099942544/4411468910';
+  static const String testAndroidInterstitialUnit =
+      'ca-app-pub-3940256099942544/1033173712';
+
   /// Google's published test **application** ids, for the value the native side
   /// needs (`GADApplicationIdentifier` in `Info.plist`,
   /// `com.google.android.gms.ads.APPLICATION_ID` in the manifest).
@@ -88,6 +107,22 @@ abstract final class AdsConfig {
       case TargetPlatform.android:
         if (testAds) return testAndroidRewardedUnit;
         return androidRewardedUnit.isEmpty ? null : androidRewardedUnit;
+      default:
+        return null;
+    }
+  }
+
+  /// The interstitial unit this build should ask for, or null when there is
+  /// none — and then no ad ever appears between games.
+  static String? get interstitialUnitId {
+    if (kIsWeb) return null;
+    switch (defaultTargetPlatform) {
+      case TargetPlatform.iOS:
+        if (testAds) return testIosInterstitialUnit;
+        return iosInterstitialUnit.isEmpty ? null : iosInterstitialUnit;
+      case TargetPlatform.android:
+        if (testAds) return testAndroidInterstitialUnit;
+        return androidInterstitialUnit.isEmpty ? null : androidInterstitialUnit;
       default:
         return null;
     }

@@ -52,3 +52,7 @@ server/build/
 packages/arco_core/.dart_tool/
 server/.dart_tool/
 .DS_Store
+
+# Build-time values (`flutter build … --dart-define-from-file=dart_defines.json`):
+# AdMob ad unit ids and, later, RevenueCat keys. Account identifiers, not for forks.
+/dart_defines.json

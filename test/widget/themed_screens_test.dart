@@ -147,7 +147,7 @@ void main() {
         theme: theme.id,
         secrets: FakeSecretStore.withCredentials(testCredentials(1)),
       );
-      env.api.accounts = const ['apple', 'google'];
+      env.api.signInMethods = const ['apple', 'google'];
       env.api.profile = PlayerProfile(id: testPlayerId(1), games: 2);
 
       for (final entry in <String, Widget>{
@@ -199,7 +199,7 @@ void main() {
         theme: theme.id,
         secrets: FakeSecretStore.withCredentials(testCredentials(1)),
       );
-      env.api.accounts = const ['apple', 'google'];
+      env.api.signInMethods = const ['apple', 'google'];
       env.api.entries = [
         LeaderboardEntry(
           rank: 1,

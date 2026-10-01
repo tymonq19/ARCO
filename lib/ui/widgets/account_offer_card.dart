@@ -7,6 +7,7 @@ import '../../services/account_service.dart';
 import '../../services/native_sign_in.dart';
 import '../../services/player_identity.dart';
 import 'account_gate.dart';
+import 'email_sign_in.dart';
 import 'neon_button.dart';
 import 'neon_panel.dart';
 import 'sign_in_buttons.dart';
@@ -69,10 +70,11 @@ class _AccountOfferCardState extends State<AccountOfferCard> {
 
   Future<void> _signIn(SignInProvider provider) async {
     setState(() {
-      _busy = true;
+      // The e-mail form shows its own progress; this one would spin behind it.
+      _busy = provider != SignInProvider.email;
       _result = null;
     });
-    final result = await context.read<AccountService>().signIn(provider);
+    final result = await runSignIn(context, provider);
     if (!mounted) return;
     setState(() {
       _busy = false;

@@ -28,6 +28,10 @@ class Storage {
   static const String _kOwnScoreIds = 'ownScoreIds';
   static const String _kOwnScoreKeys = 'ownScoreKeys';
   static const String _kPlayerCountry = 'playerCountry';
+  static const String _kSignInMethod = 'signInMethod';
+  static const String _kBreakGames = 'adBreakGames';
+  static const String _kBreakSince = 'adBreakSince';
+  static const String _kBreakAt = 'adBreakAt';
   static const String _kOfferDismissals = 'accountOfferDismissals';
   static const String _kOfferDismissedAt = 'accountOfferDismissedAt';
   static const String _kShopCache = 'shopCache';
@@ -96,6 +100,44 @@ class Storage {
   Future<void> setPlayerCountry(String? code) => code == null || code.isEmpty
       ? _prefs.remove(_kPlayerCountry)
       : _prefs.setString(_kPlayerCountry, code);
+
+  // ---------------------------------------------------------- sign-in method
+
+  /// How this device last signed in — `apple`, `google` or `email` — so
+  /// Settings can say "signed in with Apple". Display only: the server knows
+  /// the account as one Firebase user, whichever way it signs in.
+  String? get signInMethod => _prefs.getString(_kSignInMethod);
+
+  Future<void> setSignInMethod(String? method) =>
+      method == null || method.isEmpty
+      ? _prefs.remove(_kSignInMethod)
+      : _prefs.setString(_kSignInMethod, method);
+
+  // ---------------------------------------------------------- ad between games
+
+  /// Solo games this device has finished, ever — what the grace period for a new
+  /// player is counted in (see `InterstitialService`).
+  int get adBreakGames => _prefs.getInt(_kBreakGames) ?? 0;
+
+  /// Solo games finished since the last ad of any kind.
+  int get adBreakSince => _prefs.getInt(_kBreakSince) ?? 0;
+
+  /// When the last ad of any kind closed, or null when none ever has.
+  DateTime? get adBreakAt {
+    final ms = _prefs.getInt(_kBreakAt);
+    return ms == null ? null : DateTime.fromMillisecondsSinceEpoch(ms);
+  }
+
+  Future<void> setAdBreakCounts({
+    required int games,
+    required int since,
+  }) async {
+    await _prefs.setInt(_kBreakGames, games);
+    await _prefs.setInt(_kBreakSince, since);
+  }
+
+  Future<void> setAdBreakAt(DateTime at) =>
+      _prefs.setInt(_kBreakAt, at.millisecondsSinceEpoch);
 
   // ------------------------------------------------------------- account offer
 
@@ -203,9 +245,9 @@ class Storage {
 
   /// Drops the memory of which leaderboard rows this device submitted.
   ///
-  /// Part of deleting a player (SPEC §4.5): the server anonymises the rows, and
+  /// Part of deleting a player (SPEC §4.5): the server deletes the rows, and
   /// this is the other half of the same promise — the phone stops claiming them
-  /// too. The rows themselves stay on the board, as they must.
+  /// too.
   Future<void> forgetOwnScores() async {
     await _prefs.remove(_kOwnScoreIds);
     await _prefs.remove(_kOwnScoreKeys);

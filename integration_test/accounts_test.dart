@@ -37,8 +37,17 @@ class _FakeSignIn implements NativeSignIn {
   Future<bool> isAvailable(SignInProvider provider) async => true;
 
   @override
-  Future<String?> identityToken(SignInProvider provider) async =>
-      cancel ? null : 'not.a.real.jwt';
+  Future<String?> identityToken(
+    SignInProvider provider, {
+    EmailSignIn? email,
+  }) async => cancel ? null : 'not.a.real.jwt';
+
+  @override
+  Future<void> sendPasswordReset(String email) async {}
+
+  @override
+  Future<bool> deleteUser({Future<String?> Function()? askPassword}) async =>
+      true;
 
   @override
   Future<void> forgetSession() async {}
@@ -161,7 +170,7 @@ void main() {
     // ignore: avoid_print
     print(
       'accounts=${health.accounts} deleted player ${issued!.id} '
-      '(scoresAnonymised=${(deleted as DeleteSucceeded).scoresAnonymised})',
+      '(scoresDeleted=${(deleted as DeleteSucceeded).scoresDeleted})',
     );
   });
 }

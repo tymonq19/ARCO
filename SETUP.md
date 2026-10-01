@@ -12,7 +12,7 @@ Legenda: **[play]** potrzebne, żeby grać z innymi ludźmi przez internet · **
 | sekcja | stan |
 |---|---|
 | 1. Serwer online | **zrobione** — https://arco.fly.dev, Frankfurt, na wolumenie, migawki włączone |
-| 2-5, 8. Konta deweloperskie i logowanie | nie zaczęte; aplikacja działa bez nich |
+| 2-5, 8. Konta deweloperskie i logowanie | nie zaczęte; aplikacja działa bez nich. Logowanie idzie teraz przez **Firebase** (Apple, Google, e-mail) — projekt `arco-jtadevs` gotowy: Email/Password, Google i Apple włączone, pliki konfiguracyjne i `Info.plist` w repo, weryfikacja sprawdzona prawdziwym tokenem. Brakuje: `FIREBASE_PROJECT_ID` na serwerze (8.4), uprawnienia Sign in with Apple w Xcode (sekcja 2) i SHA-1 kluczy upload/Play |
 | 6, 7. Wpis w sklepie, ikona | nie zaczęte |
 | 9, 10. Odblokowanie i reklamy | nie zaczęte; oba zbudowane i wyłączone. **9 wymaga wcześniej skończonej 8** — patrz 9.0 |
 | 12.1 Kopie zapasowe | **częściowo zrobione** — Fly utworzył wolumen z zaplanowanymi migawkami; odtworzenie nigdy nie było przećwiczone |
@@ -36,10 +36,11 @@ dłużej, niż się wydaje.
    zone → Change repository visibility.
 3. **Sekcja 2, konto Apple Developer.** Nic ze sklepu, logowania ani sprzedaży nie ruszy bez
    niego, a weryfikacja tożsamości po stronie Apple potrafi zająć kilka dni.
-4. **Sekcja 8, logowanie.** To już nie jest ozdoba: od teraz konto jest wymagane przy zakupie,
-   więc bez tej sekcji nie ma sensu włączać sprzedaży — powód jest w 9.0. Pamiętaj o 8.2:
-   projekt nie zawiera pliku uprawnień, więc Sign in with Apple nie zadziała, dopóki nie dodasz
-   uprawnienia w Xcode i w App ID.
+4. **Sekcja 8, logowanie przez Firebase.** To już nie jest ozdoba: od teraz konto jest wymagane
+   przy zakupie, więc bez tej sekcji nie ma sensu włączać sprzedaży — powód jest w 9.0. Osobny
+   projekt Firebase „arco”, `flutterfire configure`, uprawnienie Sign in with Apple w Xcode
+   i w App ID, a na serwerze `FIREBASE_PROJECT_ID`. Sekcje 3 i 4 (bezpośrednie Apple i Google)
+   pomiń — Firebase je zastępuje.
 5. **Sekcja 9, sprzedaż.** Zacznij od umowy Paid Applications, podatków i danych bankowych w
    App Store Connect, bo to jest najdłuższy element całej listy i możesz go załatwić równolegle
    ze wszystkim innym. Produkt, klucz `.p8`, RevenueCat i sekrety serwera są potem szybkie.
@@ -111,16 +112,18 @@ Render potrzebują tych samych dwóch rzeczy: instancji działającej bez przerw
 | `DB_PATH` | `data/arco.db` | plik SQLite, musi leżeć na zamontowanym wolumenie |
 | `VERIFY_REPLAYS` | `strict` | zostaw strict; `off` wyłącza weryfikację tablicy wyników |
 | `LOG_LEVEL` | `info` | `debug`, kiedy dopiero wszystko ustawiasz |
-| `ACCOUNTS_ENABLED` | `off` | `on` włącza logowanie Apple i Google |
-| `APPLE_CLIENT_IDS` | nieustawione | rozdzielone przecinkami, patrz sekcja 3 |
-| `GOOGLE_CLIENT_IDS` | nieustawione | rozdzielone przecinkami, patrz sekcja 4 |
+| `ACCOUNTS_ENABLED` | `off` | `on` włącza logowanie |
+| `FIREBASE_PROJECT_ID` | nieustawione | ID projektu Firebase, którego tokeny serwer przyjmuje — patrz sekcja 8 |
+| `FIREBASE_SIGN_IN_METHODS` | `apple,google,email` | które metody logowania Firebase przyjmować i ogłaszać |
+| `APPLE_CLIENT_IDS` | nieustawione | tylko dla starych kompilacji (do 1.0.0+6), patrz sekcja 3 |
+| `GOOGLE_CLIENT_IDS` | nieustawione | tylko dla starych kompilacji (do 1.0.0+6), patrz sekcja 4 |
 | `PURCHASES_ENABLED` | `off` | `on` włącza jednorazowe odblokowanie, patrz sekcja 9 — [money] |
 | `REVENUECAT_WEBHOOK_SECRET` | nieustawione | **sekret**, patrz sekcja 9 — [money] |
 | `REVENUECAT_API_KEY` | nieustawione | **sekret**, patrz sekcja 9 — [money] |
 | `PURCHASES_SANDBOX` | `off` | `on` nadaje premium z zakupów w sandboksie; tylko staging — [money] |
 
-Ustawiasz je przez `fly secrets set NAME=value`. Przy `ACCOUNTS_ENABLED=on` i bez client id serwer odmawia
-startu, i to celowo: bez id, względem którego sprawdza tokeny, token wystawiony dla dowolnej innej aplikacji
+Ustawiasz je przez `fly secrets set NAME=value`. Przy `ACCOUNTS_ENABLED=on` bez `FIREBASE_PROJECT_ID` i bez
+żadnego client id serwer odmawia startu, i to celowo: bez id, względem którego sprawdza tokeny, token wystawiony dla dowolnej innej aplikacji
 zostałby przyjęty. To samo dotyczy `PURCHASES_ENABLED=on` bez obu sekretów RevenueCat: bez sekretu webhooka
 każdy mógłby zgłosić zakup, a bez klucza API serwer nie może sam go ponownie zweryfikować.
 
@@ -140,7 +143,11 @@ Członkostwo kosztuje 99 USD rocznie, a weryfikacja tożsamości może zająć k
 
 ---
 
-## 3. Sign in with Apple — [store]
+## 3. Sign in with Apple bezpośrednio — POMIŃ, zastąpione przez Firebase (sekcja 8)
+
+Zostaje jako zapis: tak logowały się kompilacje do 1.0.0+6. Nowe kompilacje logują się przez Firebase
+i niczego z tej sekcji nie potrzebują. Krok z uprawnieniem Sign in with Apple w App ID i w Xcode (sekcja 2,
+punkty 3-4) **jest nadal potrzebny** — natywne logowanie Apple przez Firebase też go wymaga.
 
 1. App ID z sekcji 2 z włączonym uprawnieniem to główny client id. Jest nim twój bundle identifier,
    `com.jtadevs.arco`.
@@ -156,7 +163,9 @@ Członkostwo kosztuje 99 USD rocznie, a weryfikacja tożsamości może zająć k
 
 ---
 
-## 4. Google Sign-In — [store]
+## 4. Google Sign-In bezpośrednio — POMIŃ, zastąpione przez Firebase (sekcja 8)
+
+Zostaje jako zapis dla kompilacji do 1.0.0+6. Klienci OAuth, których potrzebuje Firebase, powstają w sekcji 8.
 
 1. Utwórz projekt w konsoli Google Cloud i skonfiguruj OAuth consent screen [ekran zgody]. Aplikacja używana
    przez kogokolwiek poza twoim własnym kontem wymaga jego opublikowania, a ta weryfikacja zajmuje czas.
@@ -178,10 +187,14 @@ Oba są zbudowane, więc po prostu nie włączaj samego Google.
 
 ## 5. Podpisywanie na Androidzie — [store]
 
+**Stan:** upload keystore istnieje (`~/arco-upload.jks`, alias `upload`, SHA-1 `6F:3A:AD:…:C9:DF`),
+`android/key.properties` (poza gitem) go wskazuje, a `android/app/build.gradle.kts` podpisuje nim build release.
+SHA-1 jest dodany do Firebase. Zostało: SHA-1 klucza **Play app signing** po założeniu aplikacji w Play Console.
+
 1. Utwórz upload keystore i trzymaj go tam, gdzie go nie zgubisz. Jego utrata oznacza, że nie zaktualizujesz
    własnej aplikacji.
 2. Wskaż go w `android/key.properties` i upewnij się, że ten plik nie jest commitowany.
-3. Weź SHA-1 klucza upload oraz klucza app signing Google Play i wstaw oba do klienta OAuth Android z sekcji 4.
+3. Weź SHA-1 klucza upload oraz klucza app signing Google Play i wstaw oba do aplikacji Android w projekcie Firebase (sekcja 8.1).
    Zapomnienie o drugim to typowy powód, dla którego logowanie działa w testach i pada na produkcji.
 
 ---
@@ -194,8 +207,11 @@ Oba sklepy potrzebują tego samego materiału, więc przygotuj go raz:
 - Ikona 1024 na 1024, bez przezroczystości i bez zaokrąglonych narożników.
 - Zrzuty ekranu z wymaganych rozmiarów urządzeń. Cztery motywy dają ci wizualnie różne kadry za darmo.
 - Polityka prywatności pod publicznym URL. Trzymaj ją uczciwą i krótką: gra przechowuje nick, wyniki,
-  przybliżony kraj z locale urządzenia oraz — tylko jeśli gracz się zaloguje — nieprzejrzysty identyfikator od
-  Apple albo Google. Nie przechowuje adresu e-mail ani prawdziwego imienia.
+  przybliżony kraj z locale urządzenia oraz — tylko jeśli gracz się zaloguje — nieprzejrzysty identyfikator
+  konta. **Logowanie e-mailem zmienia jedną rzecz:** adres e-mail i hasło (zahaszowane) trzyma Firebase
+  Authentication, czyli Google, jako nasz podmiot przetwarzający. Nasz serwer nadal nie zapisuje adresu ani
+  imienia. Napisz to wprost w polityce i zaznacz „Email Address” (powiązany z tożsamością, cel: funkcjonalność
+  aplikacji) w App Privacy w App Store Connect oraz w Data safety w Play Console.
 - Ankieta age rating [klasyfikacja wiekowa]. Nie ma treści budzących zastrzeżenia, ale tablicę wyników online
   z nickami wybieranymi przez graczy warto zadeklarować, a filtr nicków to twoja odpowiedź na pytanie dalsze.
 - Export compliance: aplikacja używa tylko standardowego HTTPS, czyli zwykłe wyłączenie.
@@ -210,118 +226,115 @@ launch screen, więc zwykłe ciemne tło z logotypem czyta się lepiej niż bia�
 
 ---
 
-## 8. Konfiguracja logowania po stronie platform — [store]
+## 8. Logowanie przez Firebase (Apple, Google, e-mail) — [store]
 
-Wszystko poniżej to praca po stronie platform, której żaden kod Dart nie zrobi za ciebie. Dopóki nie jest
-zrobiona, przyciski logowania albo się nie pokazują (bo `GET /api/health` nic nie ogłasza), albo padają po
-tapnięciu. W obu przypadkach aplikacja degraduje się po cichu i zostaje w pełni grywalna, więc nic z tego nie
-blokuje wydania kompilacji bez kont.
+Aplikacja loguje gracza do **Firebase Authentication** i wysyła na serwer token Firebase, a nie token Apple
+czy Google. Serwer sprawdza go względem `FIREBASE_PROJECT_ID`. Dzięki temu jest logowanie mailem, jeden panel
+użytkowników jak w pozostałych aplikacjach, a Apple na Androidzie działa bez własnego endpointu (Firebase go
+hostuje).
 
-Paczki są już w `pubspec.yaml`: `sign_in_with_apple: ^8.1.0` i `google_sign_in: ^7.2.0`.
+Dopóki ta sekcja nie jest zrobiona, nic się nie psuje: `lib/firebase_options.dart` jest zaślepką, Firebase się
+nie uruchamia, `GET /api/health` ogłasza `"firebase":[]`, a aplikacja nie pokazuje żadnego przycisku logowania.
 
-### 8.1 Wartości compile-time, które czyta aplikacja
+### 8.1 Projekt Firebase
 
-To publiczne identyfikatory, nie sekrety, i serwer nigdy im nie ufa — sprawdza `aud` tokenu względem własnych
-`APPLE_CLIENT_IDS` / `GOOGLE_CLIENT_IDS`. Patrz `lib/app/account_config.dart`.
+**Stan:** projekt `arco-jtadevs` (konto jta.devs@gmail.com) istnieje, aplikacje iOS i Android są w nim
+zarejestrowane, SHA-1 klucza debug jest dodany, a Email/Password, Google i Apple są włączone (Anonymous nie).
+Do zrobienia: SHA-1 kluczy upload i Play (punkt 3), gdy powstaną — potem pobierz nowy `google-services.json`.
 
-| `--dart-define` | potrzebne dla | wartość |
-|---|---|---|
-| `GOOGLE_CLIENT_ID` | iOS / macOS | client id OAuth **iOS**, `…apps.googleusercontent.com`. Opcjonalne, jeśli zamiast tego wstawisz `GIDClientID` do `Info.plist` (8.3). |
-| `GOOGLE_SERVER_CLIENT_ID` | **Android** | client id OAuth **Web** z tego samego projektu. Bez niego Android nie zwraca żadnego `idToken`, a aplikacja zgłasza „that sign-in returned nothing to verify”. Ten id jest `aud`, który nosi token, więc to jego musi zawierać `GOOGLE_CLIENT_IDS` dla Androida. |
-| `APPLE_SERVICE_ID` | tylko Android | **Services ID** Apple dla flow web. Bez niego (i bez następnego) przycisk Apple nie jest oferowany na Androidzie. |
-| `APPLE_REDIRECT_URI` | tylko Android | Return URL zarejestrowany na tym Services ID, np. `https://arco.example.com/callbacks/sign_in_with_apple`. |
+1. W konsoli Firebase utwórz **osobny projekt „arco”**. Nie dokładaj Arco do projektu innej aplikacji: serwer
+   przyjmuje każdy token z danego projektu, więc we wspólnym projekcie konto z Prawko na 5 byłoby ważne w Arco.
+2. Dodaj aplikację **iOS** z bundle id `com.jtadevs.arco`.
+3. Dodaj aplikację **Android** z pakietem `com.jtadevs.arco` i odciskami SHA-1 kluczy **debug, upload i Play
+   app signing** (sekcja 5). Brak SHA-1 klucza Play to typowy powód, dla którego Google działa w testach, a na
+   produkcji nie.
+4. Authentication → Sign-in method: włącz **Email/Password**, **Google** i **Apple**. *Nie* włączaj Anonymous —
+   serwer i tak odrzuca takie tokeny (`unsupported_method`).
+5. Authentication → Settings → User account linking: zostaw domyślne „Link accounts that use the same email”.
 
-Przykładowa kompilacja release:
+### 8.2 Apple
+
+- **iOS:** wystarczy uprawnienie Sign in with Apple w App ID i w Xcode (sekcja 2, punkty 3-4). W Firebase przy
+  dostawcy Apple nic nie musisz wpisywać.
+- **Android (opcjonalnie):** w Apple utwórz Services ID, włącz na nim Sign in with Apple i jako return URL podaj
+  `https://<projekt>.firebaseapp.com/__/auth/handler`. Utwórz też **klucz Sign in with Apple** (`.p8`, inny niż
+  klucz In-App Purchase z sekcji 9). W Firebase przy dostawcy Apple wpisz Services ID, Team ID, Key ID i ten
+  klucz. Bez tego przycisk Apple na Androidzie zgłosi błąd; możesz go wtedy wyłączyć, zostawiając
+  `FIREBASE_SIGN_IN_METHODS=google,email` — ale to dotyczy całego serwera, więc lepiej zrobić konfigurację.
+- Przy usuwaniu konta aplikacja prosi o ponowne zalogowanie przez Apple i unieważnia token
+  (`revokeTokenWithAuthorizationCode`), czego Apple wymaga.
+
+### 8.3 Pliki w repozytorium
+
+**Stan: zrobione.** `lib/firebase_options.dart`, `GoogleService-Info.plist` (z `CLIENT_ID`)
+i `google-services.json` są w repozytorium, `GIDClientID` i URL scheme są w `Info.plist`, a Web client ID dla
+Androida jest wartością domyślną `GOOGLE_SERVER_CLIENT_ID` w `lib/app/account_config.dart` — zwykłe
+`flutter build appbundle` nie potrzebuje żadnej flagi. Poniższe zostaje na wypadek odtwarzania od zera.
+
+Z katalogu głównego repozytorium:
 
 ```bash
-flutter build ipa --dart-define=SERVER_URL=https://arco.fly.dev \
-  --dart-define=GOOGLE_CLIENT_ID=123-ios.apps.googleusercontent.com
+dart pub global activate flutterfire_cli
+flutterfire configure --project=<id projektu> --platforms=ios,android
+```
+
+To nadpisuje `lib/firebase_options.dart` prawdziwymi wartościami i dokłada `ios/Runner/GoogleService-Info.plist`
+oraz `android/app/google-services.json`. Zacommituj je — to identyfikatory publiczne, nie sekrety.
+
+Potem dla Google na iOS dopisz do `ios/Runner/Info.plist` (wartości są w `GoogleService-Info.plist`):
+
+```xml
+<key>GIDClientID</key>
+<string>CLIENT_ID z GoogleService-Info.plist</string>
+<key>CFBundleURLTypes</key>
+<array>
+  <dict>
+    <key>CFBundleTypeRole</key><string>Editor</string>
+    <key>CFBundleURLSchemes</key>
+    <array><string>REVERSED_CLIENT_ID z GoogleService-Info.plist</string></array>
+  </dict>
+</array>
+```
+
+Bez URL scheme okno Google się otwiera i nigdy nie wraca.
+
+Na Androidzie Google potrzebuje jeszcze client id typu **Web** z tego samego projektu (Firebase tworzy go sam:
+Authentication → Sign-in method → Google → Web SDK configuration → Web client ID). Przekaż go przy budowaniu:
+
+```bash
 flutter build appbundle --dart-define=SERVER_URL=https://arco.fly.dev \
-  --dart-define=GOOGLE_SERVER_CLIENT_ID=123-web.apps.googleusercontent.com
+  --dart-define=GOOGLE_SERVER_CLIENT_ID=<web client id>.apps.googleusercontent.com
+flutter build ipa --dart-define=SERVER_URL=https://arco.fly.dev
 ```
 
-### 8.2 iOS — Sign in with Apple
+Minimalny iOS to już 15.0 (`ios/Podfile` i `project.pbxproj`), tak jak wymaga Firebase 12.
 
-1. App ID `com.jtadevs.arco` potrzebuje uprawnienia **Sign in with Apple** (sekcja 2).
-2. W Xcode: target Runner → Signing and Capabilities → **+ Capability** → Sign in with Apple. To wpisuje
-   `com.apple.developer.applesignin = ["Default"]` do `ios/Runner/Runner.entitlements` i wiąże uprawnienie
-   z twoim provisioning profile. Repozytorium celowo nie zawiera tego uprawnienia: kompilacja podpisana
-   App ID bez tego uprawnienia nie daje się zainstalować.
-3. Nic więcej. Żadnego klucza w `Info.plist`, żadnego URL scheme, a `aud` tokenu to bundle id — czyli
-   `APPLE_CLIENT_IDS=com.jtadevs.arco` na serwerze.
-4. Wymaga iOS 13 albo nowszego. Projekt celuje już w 13.0, a poniżej tego aplikacja ukrywa przycisk.
-
-### 8.3 iOS — Google Sign-In
-
-1. Utwórz klienta OAuth **iOS** (sekcja 4) i pobierz jego `GoogleService-Info.plist` — albo po prostu przepisz
-   z niego dwie wartości.
-2. Dodaj do `ios/Runner/Info.plist`:
-   ```xml
-   <key>GIDClientID</key>
-   <string>123-ios.apps.googleusercontent.com</string>
-   <key>CFBundleURLTypes</key>
-   <array>
-     <dict>
-       <key>CFBundleTypeRole</key><string>Editor</string>
-       <key>CFBundleURLSchemes</key>
-       <array><string>com.googleusercontent.apps.123-ios</string></array>
-     </dict>
-   </array>
-   ```
-   URL scheme to **odwrócona** forma client id, dokładnie taka, jaką pokazuje konsola. Bez niego sheet
-   Google się otwiera i nigdy nie wraca.
-3. `GIDClientID` i `--dart-define=GOOGLE_CLIENT_ID` robią to samo; przekazany define wygrywa. Użyj jednego.
-4. Nie potrzeba żadnego uprawnienia ani grupy keychain sharing.
-
-### 8.4 Android — Google Sign-In
-
-1. Utwórz klienta OAuth **Android** z pakietem `com.jtadevs.arco` i SHA-1 *obu* kluczy: twojego upload
-   i app signing Play (sekcja 5).
-2. Utwórz też klienta OAuth **Web** i przekaż go jako `--dart-define=GOOGLE_SERVER_CLIENT_ID`. Android bierze
-   swój `idToken` z tego id.
-3. `google_sign_in` 7.x używa Credential Manager, więc **nie** ma żadnego `google-services.json` ani pluginu
-   Gradle `com.google.gms.google-services` do dodania. `android/app/build.gradle.kts` nie potrzebuje nowego
-   wpisu; manifest i zależności samej paczki scala Flutter.
-4. `minSdk` musi być 21 albo wyżej, co `flutter.minSdkVersion` już spełnia.
-
-### 8.5 Android — Sign in with Apple (opcjonalnie)
-
-Na Androidzie nie ma natywnego logowania Apple; paczka otwiera webowy flow Apple w Chrome Custom Tab.
-
-1. Utwórz w Apple **Services ID**, włącz na nim Sign in with Apple i zarejestruj Return URL, który
-   kontrolujesz.
-2. Ten URL musi być prawdziwym endpointem: dostaje `POST` od Apple i musi przekierować z powrotem do aplikacji
-   przez `intent://callback?...#Intent;package=com.jtadevs.arco;scheme=signinwithapple;end`. README paczki ma
-   ten dwulinijkowy handler.
-3. Dodaj do `android/app/src/main/AndroidManifest.xml` intent filter opisany w dokumentacji paczki (scheme
-   `signinwithapple`, host `callback`).
-4. Przekaż `APPLE_SERVICE_ID` i `APPLE_REDIRECT_URI` oraz dodaj Services ID do `APPLE_CLIENT_IDS` na serwerze
-   — `aud` webowego flow to Services ID, nie bundle id.
-5. Spokojnie można to wszystko pominąć: aplikacja oferuje wtedy na Androidzie tylko Google, na co zasada Apple
-   pozwala, bo dotyczy tylko tego, co oferuje iOS.
-
-### 8.6 Po stronie serwera
+### 8.4 Serwer
 
 ```bash
-fly secrets set ACCOUNTS_ENABLED=on
-fly secrets set APPLE_CLIENT_IDS=com.jtadevs.arco
-fly secrets set GOOGLE_CLIENT_IDS=123-ios.apps.googleusercontent.com,123-web.apps.googleusercontent.com
+fly secrets set FIREBASE_PROJECT_ID=<id projektu> ACCOUNTS_ENABLED=on
 ```
 
-Dostawca bez client id nie jest ogłaszany, więc start tylko z Apple po prostu zostawia `GOOGLE_CLIENT_IDS`
-nieustawione. `GET /api/health` to jedyne źródło prawdy o tym, które przyciski pokazuje aplikacja: jeśli
-`accounts` to `[]`, logowanie nie pojawia się nigdzie w aplikacji i nie ma martwych przycisków do tłumaczenia.
+`FIREBASE_SIGN_IN_METHODS` zostaw nieustawione (czyli wszystkie trzy), chyba że któraś metoda nie jest
+skonfigurowana. **Nie ustawiaj** `APPLE_CLIENT_IDS` ani `GOOGLE_CLIENT_IDS` — są tylko dla starych kompilacji
+z TestFlight. Jeśli już je ustawiłeś, nic się nie stało: powiązania kont ma tylko twoje testowe konto.
 
-### 8.7 Co sprawdzić na urządzeniu
+Sprawdź `GET /api/health`: pole `firebase` musi zawierać `["apple","google","email"]`. Aplikacja pokazuje tylko te
+przyciski, które ogłasza to pole.
 
-- `GET /api/health` wypisuje dostawców, których skonfigurowałeś.
-- Na iOS oba przyciski pojawiają się na karcie końca gry po rekordzie osobistym, Apple pierwszy.
-- Anulowanie sheeta nie robi zupełnie nic — żadnego błędu, żadnego komunikatu.
-- Zalogowanie się na drugim urządzeniu mówi „Welcome back”, a tablica wyników podświetla te same przebiegi.
-- Ustawienia → Konto pokazuje dostawcę i datę, a **USUŃ MOJE KONTO** wymaga dwóch tapnięć przez dwa różne
-  dialogi.
-- Web: nic o logowaniu się nie pokazuje, i to celowo — kompilacja przeglądarkowa nie ma keychaina, w którym
-  trzymałaby poświadczenie.
+### 8.5 Co sprawdzić na urządzeniu
+
+- Po grze linijka „Wpisz ten wynik na światową tablicę” otwiera arkusz z Apple, Google i „Kontynuuj przez
+  e-mail” (na iOS Apple pierwszy, e-mail zawsze ostatni).
+- E-mail: załóż konto, wyloguj się, zaloguj ponownie; „Nie pamiętasz hasła?” wysyła maila (sprawdź spam,
+  a w Authentication → Templates możesz ustawić polską treść i nadawcę).
+- Anulowanie okna Apple/Google albo zamknięcie formularza nie robi nic — żadnego komunikatu.
+- Zalogowanie się na drugim urządzeniu tym samym sposobem mówi „Witaj ponownie”.
+- Ustawienia → Konto pokazuje „Zalogowano przez Apple / Google / e-mail” i datę.
+- **USUŃ MOJE KONTO**: dwa dialogi, potem przy Apple ponowne logowanie Apple, przy e-mailu pytanie o hasło (jeśli
+  logowanie było dawno). Po usunięciu użytkownik znika z Firebase → Authentication → Users, a jego wyniki
+  z rankingu.
+- Web: nic o logowaniu się nie pokazuje, i to celowo.
 
 ---
 
@@ -588,6 +601,11 @@ testowe reklamy zdezaktualizowanym ustawieniem, a testowy identyfikator nie zost
 
 ### 10.2 Konto i aplikacja w AdMob
 
+**Stan:** konto `ca-app-pub-7945255836990149`; aplikacje „Arco Game” (Android, `~6255622352`) i „Arco Games”
+(iOS, `~8350379217`) są wpisane do manifestów. Jednostki z nagrodą: Android `/9571875821`, iOS `/7791890290` —
+w `dart_defines.json` (poza gitem). Jednostki pełnoekranowe (10.3a): Android `/1425878213`, iOS `/4100057293`, tamże.
+Buduj z `--dart-define-from-file=dart_defines.json`.
+
 1. Załóż konto AdMob na <https://apps.admob.com> i powiąż je z kontem Google, na które mają iść pieniądze.
 2. **Apps → Add app**, raz na platformę (iOS i Android). Jeśli aplikacja jest już w sklepie, wybierz ją; w przeciwnym
    razie zaznacz, że nie jest jeszcze opublikowana, i powiąż ją później.
@@ -616,6 +634,17 @@ dodana bez świadomej zmiany.
    `server/lib/src/tokens.dart`. Liczba wpisana w formularz na stronie nie jest źródłem prawdy o ekonomii. Obie
    wartości trafiają do naszego rejestru, więc panel, który rozjechał się z kodem, widać w zapytaniu.
 4. Skopiuj każde **Ad unit ID** (`ca-app-pub-XXXXXXXXXXXXXXXX/ZZZZZZZZZZ`, z **ukośnikiem**).
+
+### 10.3a Jednostka pełnoekranowa (reklama między grami)
+
+Druga jednostka na platformę: **Pełnoekranowa** (Interstitial). Aplikacja pokazuje ją po co 3. grze solo, przy
+wyjściu z ekranu wyniku (RETRY/MENU), nie częściej niż co 3 minuty, nigdy w pierwszych 5 grach nowego gracza, nigdy
+po duelu i nigdy graczowi z odblokowaniem. Reguły są w `lib/services/interstitial_ads.dart`.
+
+1. **Jednostki reklamowe → Dodaj → Pełnoekranowa**, nazwa `Arco between games`, typy: obraz i wideo.
+2. **Bez** weryfikacji po stronie serwera — ta reklama niczego nie płaci.
+3. Skopiuj Ad unit ID do `dart_defines.json` jako `ADMOB_IOS_INTERSTITIAL_UNIT` /
+   `ADMOB_ANDROID_INTERSTITIAL_UNIT`. Bez nich reklama między grami po prostu się nie pojawia.
 
 ### 10.4 Adres URL weryfikacji po stronie serwera — ten ważny
 
@@ -675,7 +704,9 @@ flutter build ios --release \
 |---|---|---|
 | `ADMOB_IOS_REWARDED_UNIT` | identyfikator jednostki z nagrodą dla iOS | brak przycisku reklamy na iOS |
 | `ADMOB_ANDROID_REWARDED_UNIT` | identyfikator jednostki z nagrodą dla Androida | brak przycisku reklamy na Androidzie |
-| `ADMOB_TEST_ADS` | `on`, żeby zamiast nich użyć jednostek testowych Google | — (i **nadpisuje** dwa powyższe) |
+| `ADMOB_IOS_INTERSTITIAL_UNIT` | jednostka pełnoekranowa dla iOS (10.3a) | brak reklamy między grami na iOS |
+| `ADMOB_ANDROID_INTERSTITIAL_UNIT` | jednostka pełnoekranowa dla Androida (10.3a) | brak reklamy między grami na Androidzie |
+| `ADMOB_TEST_ADS` | `on`, żeby zamiast nich użyć jednostek testowych Google | — (i **nadpisuje** powyższe) |
 
 Kompilacja bez żadnej z nich nie pokazuje przycisku reklamy w ogóle — ani wyłączonego, ani błędu. To samo dostaje
 kompilacja web i każdy desktop, bo AdMob nie ma tam reklam. Trzymaj je tam, gdzie klucze RevenueCat (§9.5): w

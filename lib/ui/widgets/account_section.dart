@@ -7,6 +7,8 @@ import '../../services/account_service.dart';
 import '../../services/api_client.dart';
 import '../../services/native_sign_in.dart';
 import '../../services/player_identity.dart';
+import '../../services/storage.dart';
+import 'email_sign_in.dart';
 import 'neon_button.dart';
 import 'neon_panel.dart';
 import 'sign_in_buttons.dart';
@@ -52,10 +54,11 @@ class _AccountSectionState extends State<AccountSection> {
 
   Future<void> _signIn(SignInProvider provider) async {
     setState(() {
-      _busy = true;
+      // The e-mail form shows its own progress; this one would spin behind it.
+      _busy = provider != SignInProvider.email;
       _result = null;
     });
-    final result = await context.read<AccountService>().signIn(provider);
+    final result = await runSignIn(context, provider);
     if (!mounted) return;
     setState(() {
       _busy = false;
@@ -103,7 +106,9 @@ class _AccountSectionState extends State<AccountSection> {
     }
     if (!mounted) return;
     setState(() => _busy = true);
-    final result = await context.read<AccountService>().deleteAccount();
+    final result = await context.read<AccountService>().deleteAccount(
+      askPassword: () => askForPassword(context),
+    );
     if (!mounted) return;
     setState(() {
       _busy = false;
@@ -112,11 +117,12 @@ class _AccountSectionState extends State<AccountSection> {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(switch (result) {
-          DeleteSucceeded(scoresAnonymised: final n) when n > 0 => s.f(
+          DeleteSucceeded(scoresDeleted: final n) when n > 0 => s.f(
             'account.deletedRuns',
             {'count': n},
           ),
           DeleteSucceeded() => s.t('account.deleted'),
+          DeleteCancelled() => s.t('account.deleteCancelled'),
           DeleteFailed(code: final code) => s.accountError(code),
         }),
       ),
@@ -253,7 +259,14 @@ class _AccountSectionState extends State<AccountSection> {
             children: [
               Text(
                 s.f('account.linkedWith', {
-                  'provider': s.accountProvider(profile.provider),
+                  'provider': s.accountProvider(
+                    // The server knows a Firebase account as one user however
+                    // it signs in; how *this* phone signed in is ours to say.
+                    profile.provider == AccountService.firebaseProvider
+                        ? context.read<Storage>().signInMethod ??
+                              profile.provider
+                        : profile.provider,
+                  ),
                 }),
                 style: TextStyle(
                   color: theme.textPrimary,

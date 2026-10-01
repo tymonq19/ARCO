@@ -7,7 +7,7 @@ import '../../app/strings.dart';
 import '../../services/native_sign_in.dart';
 import 'brand_logos.dart';
 
-/// The provider sign-in buttons (SPEC §4.5).
+/// The sign-in buttons: Apple, Google and e-mail (SPEC §4.5).
 ///
 /// These are the two widgets in the app that do **not** take their colours from
 /// the [GameTheme], and deliberately so. Apple's Human Interface Guidelines fix
@@ -58,6 +58,7 @@ class SignInButton extends StatelessWidget {
     final label = switch (provider) {
       SignInProvider.apple => s.t('account.signInApple'),
       SignInProvider.google => s.t('account.signInGoogle'),
+      SignInProvider.email => s.t('account.signInEmail'),
     };
     final scale = MediaQuery.textScalerOf(
       context,
@@ -72,7 +73,9 @@ class SignInButton extends StatelessWidget {
             : (Colors.black, Colors.white, null),
       // Google: its own light and dark button tokens, including the grey rule
       // that keeps the white one visible on white.
-      SignInProvider.google =>
+      // E-mail has no brand of its own; it wears Google's neutral scheme so
+      // the three buttons read as one set and none outranks Apple's.
+      SignInProvider.google || SignInProvider.email =>
         light
             ? (Colors.white, const Color(0xFF1F1F1F), const Color(0xFF747775))
             : (const Color(0xFF131314), const Color(0xFFE3E3E3), null),
@@ -168,6 +171,11 @@ class SignInButton extends StatelessWidget {
             SignInProvider.google => SizedBox.square(
               dimension: fontSize,
               child: const CustomPaint(painter: GoogleGPainter()),
+            ),
+            SignInProvider.email => Icon(
+              Icons.mail_outline,
+              size: fontSize * 1.15,
+              color: color,
             ),
           },
         ),

@@ -29,7 +29,7 @@ void main() {
       prefs: prefs,
       native: native,
     );
-    env.api.accounts = accounts;
+    env.api.signInMethods = accounts;
     return env;
   }
 

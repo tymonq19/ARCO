@@ -63,7 +63,7 @@ void main() {
       native: native,
       secrets: FakeSecretStore.withCredentials(testCredentials(1)),
     );
-    env.api.accounts = accounts;
+    env.api.signInMethods = accounts;
     env.api.profile = PlayerProfile(
       id: testPlayerId(1),
       games: 2,

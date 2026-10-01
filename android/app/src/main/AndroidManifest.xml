@@ -29,17 +29,14 @@
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
         </activity>
-        <!-- AdMob (SPEC §4.10). **Google's published test application id**: it
-             serves test ads to anybody and belongs to no account, which is what
-             makes the rewarded-ad loop walkable before a human has signed up for
-             AdMob. A real deployment replaces it with its own app id from the
-             AdMob console — see SETUP.md §10. The Mobile Ads SDK reads this at
+        <!-- AdMob (SPEC §4.10): the app id of "Arco Game" (Android) in the
+             AdMob account ca-app-pub-7945255836990149 — see SETUP.md §10. The Mobile Ads SDK reads this at
              initialisation, and the app initialises it only when an ad unit is
-             configured (`--dart-define=ADMOB_ANDROID_REWARDED_UNIT=…` or
+             configured (the `ADMOB_ANDROID_REWARDED_UNIT` dart-define, or
              `ADMOB_TEST_ADS=on`). -->
         <meta-data
             android:name="com.google.android.gms.ads.APPLICATION_ID"
-            android:value="ca-app-pub-3940256099942544~3347511713" />
+            android:value="ca-app-pub-7945255836990149~6255622352" />
         <!-- Don't delete the meta-data below.
              This is used by the Flutter tool to generate GeneratedPluginRegistrant.java -->
         <meta-data

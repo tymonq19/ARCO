@@ -296,4 +296,39 @@ void main() {
 
     await tester.pumpWidget(const SizedBox());
   });
+
+  // SPEC 4.10: the ad between games is shown on the way out of the score screen
+  // — never over the result — and only when a break is due.
+  testWidgets('a due ad break plays on RETRY, after the result', (
+    tester,
+  ) async {
+    useTallPhone(tester);
+    final breaks = FakeInterstitialGateway();
+    final env = await createTestEnv(
+      adsGateway: FakeAdsGateway(),
+      interstitialGateway: breaks,
+    );
+    // Past the grace, with this run the third since the last ad.
+    await env.storage.setAdBreakCounts(games: 10, since: 2);
+
+    await tester.pumpWidget(wrapApp(env, const SoloScreen()));
+    await tester.tap(find.text('TAP TO START').last);
+    for (var i = 0; i < 6000 && env.api.submitCalls == 0; i++) {
+      await tester.pump(const Duration(milliseconds: 16));
+    }
+    expect(env.api.submitCalls, 1, reason: 'the game never ended');
+    await pumpFrames(tester, 12);
+
+    // The result is on screen and the ad is in hand, not shown.
+    expect(find.text('RETRY'), findsOneWidget);
+    expect(breaks.loaded, isTrue);
+    expect(breaks.showCalls, 0);
+
+    await tester.tap(find.text('RETRY'));
+    await pumpFrames(tester, 4);
+    expect(breaks.showCalls, 1);
+    expect(env.storage.adBreakSince, 0);
+
+    await tester.pumpWidget(const SizedBox());
+  });
 }

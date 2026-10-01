@@ -24,8 +24,14 @@ abstract final class AccountConfig {
   /// Android has no client id of its own: `google_sign_in` needs this one to be
   /// handed an `idToken` at all, and its value is the `aud` the token carries —
   /// so it is what the server's `GOOGLE_CLIENT_IDS` must list.
+  ///
+  /// Defaults to the web client of the Firebase project `arco-jtadevs`, so a
+  /// plain `flutter build appbundle` signs in with Google without remembering a
+  /// flag; a define still overrides it for another project.
   static const String googleServerClientId = String.fromEnvironment(
     'GOOGLE_SERVER_CLIENT_ID',
+    defaultValue:
+        '333057111778-o03o8g6q35sia00lanuulleti175ghos.apps.googleusercontent.com',
   );
 
   /// The Apple **Services ID** used for the web-based flow on Android, from

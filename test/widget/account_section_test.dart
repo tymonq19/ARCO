@@ -21,7 +21,7 @@ void main() {
           ? FakeSecretStore.withCredentials(testCredentials(1))
           : null,
     );
-    env.api.accounts = accounts;
+    env.api.signInMethods = accounts;
     if (linked) {
       env.api.profile = PlayerProfile(
         id: testPlayerId(1),
@@ -50,6 +50,15 @@ void main() {
     await tester.pump();
     await tester.pump();
     await tester.pump();
+  }
+
+  /// Lets a dialog open or close while something keeps animating — the password
+  /// field's cursor, the section's spinner behind it — so `pumpAndSettle` never
+  /// would.
+  Future<void> settleUnder(WidgetTester tester) async {
+    for (var i = 0; i < 10; i++) {
+      await tester.pump(const Duration(milliseconds: 100));
+    }
   }
 
   testWidgets('it lives in Settings', (tester) async {
@@ -140,7 +149,7 @@ void main() {
     testWidgets('takes two deliberate steps', (tester) async {
       useTallPhone(tester);
       final env = await envWith(linked: true);
-      env.api.scoresAnonymised = 4;
+      env.api.scoresDeleted = 4;
       await pumpSection(tester, env);
 
       await tester.tap(find.text('DELETE MY ACCOUNT'));
@@ -149,11 +158,7 @@ void main() {
       // Step one explains, in plain words, what disappears and what does not.
       expect(find.text('DELETE YOUR ACCOUNT?'), findsOneWidget);
       expect(
-        find.textContaining('every link between you and the runs'),
-        findsOneWidget,
-      );
-      expect(
-        find.textContaining('scores themselves stay on the leaderboard'),
+        find.textContaining('all your scores on the leaderboard'),
         findsOneWidget,
       );
       expect(
@@ -176,7 +181,7 @@ void main() {
       expect(env.identity.isIdentified, isFalse);
       expect(env.secrets.values, isEmpty);
       expect(
-        find.text('Account deleted — 4 runs stay without an owner'),
+        find.text('Account deleted — 4 scores removed from the leaderboard'),
         findsOneWidget,
       );
     });
@@ -256,5 +261,120 @@ void main() {
     expect(env.identity.playerId, testCredentials(2).id);
     expect(find.text('Signed in with Apple'), findsOneWidget);
     expect(find.text('SIGN OUT ON THIS DEVICE'), findsOneWidget);
+  });
+
+  testWidgets('signing in with e-mail goes through the form', (tester) async {
+    useTallPhone(tester);
+    final env = await envWith(accounts: const ['apple', 'google', 'email']);
+    env.api.linkMethod = 'email';
+    await pumpSection(tester, env);
+
+    await tester.tap(find.text('Continue with e-mail'));
+    await tester.pumpAndSettle();
+    expect(find.text('SIGN IN WITH E-MAIL'), findsOneWidget);
+
+    // Not until the address looks like one and there is a password.
+    await tester.enterText(find.byKey(const ValueKey('email.address')), 'ada');
+    await tester.pump();
+    await tester.tap(find.text('SIGN IN'));
+    await tester.pump();
+    expect(env.native.emailForms, isEmpty);
+
+    // A new account, which asks for a password of at least six characters.
+    await tester.tap(find.text('No account yet? Create one'));
+    await tester.pump();
+    await tester.enterText(
+      find.byKey(const ValueKey('email.address')),
+      'ada@example.com',
+    );
+    await tester.enterText(
+      find.byKey(const ValueKey('email.password')),
+      'secret1',
+    );
+    await tester.pump();
+    await tester.tap(find.text('CREATE ACCOUNT'));
+    await tester.pumpAndSettle();
+
+    expect(env.native.emailForms.single.create, isTrue);
+    expect(env.identity.playerId, testCredentials(2).id);
+    expect(find.text('Signed in with e-mail'), findsOneWidget);
+  });
+
+  testWidgets('a wrong password stays in the form, said in words', (
+    tester,
+  ) async {
+    useTallPhone(tester);
+    final env = await envWith(accounts: const ['email']);
+    env.native.failure = 'email_wrong';
+    await pumpSection(tester, env);
+
+    await tester.tap(find.text('Continue with e-mail'));
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.byKey(const ValueKey('email.address')),
+      'ada@example.com',
+    );
+    await tester.enterText(find.byKey(const ValueKey('email.password')), 'x');
+    await tester.pump();
+    await tester.tap(find.text('SIGN IN'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('Wrong e-mail or password.'), findsOneWidget);
+    expect(find.text('SIGN IN WITH E-MAIL'), findsOneWidget);
+
+    await tester.tap(find.text('Forgot your password?'));
+    await tester.pumpAndSettle();
+    expect(env.native.resets, ['ada@example.com']);
+    expect(find.textContaining('reset the password'), findsOneWidget);
+  });
+
+  testWidgets('deleting an e-mail account asks for the password', (
+    tester,
+  ) async {
+    useTallPhone(tester);
+    final env = await envWith(linked: true);
+    env.native.deleteAsksPassword = true;
+    await pumpSection(tester, env);
+
+    await tester.tap(find.text('DELETE MY ACCOUNT'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('CONTINUE'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('DELETE PERMANENTLY'));
+    await settleUnder(tester);
+
+    expect(
+      find.text('To delete your account, enter your password once more.'),
+      findsOneWidget,
+    );
+    await tester.enterText(
+      find.byKey(const ValueKey('email.reauthPassword')),
+      'secret1',
+    );
+    await tester.pump();
+    await tester.tap(find.text('DELETE PERMANENTLY'));
+    await settleUnder(tester);
+
+    expect(env.native.passwordsGiven, ['secret1']);
+    expect(env.api.deletePlayerCalls, 1);
+  });
+
+  testWidgets('backing out of the password deletes nothing', (tester) async {
+    useTallPhone(tester);
+    final env = await envWith(linked: true);
+    env.native.deleteAsksPassword = true;
+    await pumpSection(tester, env);
+
+    await tester.tap(find.text('DELETE MY ACCOUNT'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('CONTINUE'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('DELETE PERMANENTLY'));
+    await settleUnder(tester);
+    await tester.tap(find.text('KEEP MY ACCOUNT'));
+    await settleUnder(tester);
+
+    expect(env.api.deletePlayerCalls, 0);
+    expect(find.text('Nothing was deleted'), findsOneWidget);
   });
 }

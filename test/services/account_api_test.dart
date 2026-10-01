@@ -234,12 +234,17 @@ void main() {
     );
   });
 
-  test('a deletion authenticates and reports the anonymised runs', () async {
+  test('a deletion authenticates and reports the deleted runs', () async {
     late http.Request sent;
     final api = clientFor((request) async {
       sent = request;
       return http.Response(
-        jsonEncode({'ok': true, 'deleted': true, 'scoresAnonymised': 4}),
+        jsonEncode({
+          'ok': true,
+          'deleted': true,
+          'scoresDeleted': 4,
+          'scoresAnonymised': 0,
+        }),
         200,
       );
     });

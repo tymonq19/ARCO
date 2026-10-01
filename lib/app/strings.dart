@@ -482,9 +482,29 @@ class Strings {
     // used for Google, whose branding asks for it too.
     'account.signInApple': 'Sign in with Apple',
     'account.signInGoogle': 'Sign in with Google',
+    'account.signInEmail': 'Continue with e-mail',
     'account.working': 'Signing in…',
     'account.provider.apple': 'Apple',
     'account.provider.google': 'Google',
+    'account.provider.email': 'e-mail',
+    'account.provider.firebase': 'your account',
+    'account.email.title': 'Sign in with e-mail',
+    'account.email.createTitle': 'Create an account',
+    'account.email.address': 'E-mail address',
+    'account.email.password': 'Password',
+    'account.email.passwordHint': 'At least {count} characters',
+    'account.email.showPassword': 'Show password',
+    'account.email.hidePassword': 'Hide password',
+    'account.email.signIn': 'SIGN IN',
+    'account.email.create': 'CREATE ACCOUNT',
+    'account.email.noAccount': 'No account yet? Create one',
+    'account.email.haveAccount': 'Already have an account? Sign in',
+    'account.email.forgot': 'Forgot your password?',
+    'account.email.resetSent':
+        'If {email} has an account, a link to reset the password is on its way.',
+    'account.email.reauthBody':
+        'To delete your account, enter your password once more.',
+    'account.deleteCancelled': 'Nothing was deleted',
     'account.linkedWith': 'Signed in with {provider}',
     'account.linkedSince': 'Since {date}',
     'account.signedOutHint':
@@ -503,21 +523,18 @@ class Strings {
     'account.delete': 'DELETE MY ACCOUNT',
     'account.deleteTitle': 'Delete your account?',
     'account.deleteBody':
-        'This deletes your account, this phone\'s sign-in and every link '
-        'between you and the runs you have played.\n\nThe scores themselves stay '
-        'on the leaderboard without a name attached to you: removing them would '
-        'change everybody else\'s rank. Your personal best on this phone stays '
-        'too, and you can keep playing.',
+        'This deletes your account, this phone\'s sign-in and all your scores '
+        'on the leaderboard.\n\nYour personal best on this phone stays, and you '
+        'can keep playing.',
     'account.deleteContinue': 'CONTINUE',
     'account.deleteConfirmTitle': 'This cannot be undone',
     'account.deleteConfirmBody':
-        'There is no way to get the account back, and no way to prove those '
-        'runs were yours afterwards.',
+        'There is no way to get the account or those scores back.',
     'account.deleteConfirm': 'DELETE PERMANENTLY',
     'account.deleteCancel': 'KEEP MY ACCOUNT',
     'account.deleted': 'Account deleted',
     'account.deletedRuns':
-        'Account deleted — {count} runs stay without an owner',
+        'Account deleted — {count} scores removed from the leaderboard',
     'account.error.offline':
         'No connection — sign in again when you are back online.',
     'account.error.accounts_disabled':
@@ -540,6 +557,15 @@ class Strings {
     'account.error.no_token':
         'That sign-in returned nothing to verify. Please try again.',
     'account.error.unknown': 'Sign-in did not finish. Please try again.',
+    'account.error.email_invalid': 'That e-mail address does not look right.',
+    'account.error.email_wrong': 'Wrong e-mail or password.',
+    'account.error.email_taken':
+        'There is already an account with this e-mail — sign in instead.',
+    'account.error.email_weak':
+        'That password is too weak — use at least 6 characters.',
+    'account.error.other_method':
+        'This e-mail already signs in another way — try Apple or Google.',
+    'account.error.disabled': 'This account has been disabled.',
   };
 
   static const Map<String, String> pl = {
@@ -845,9 +871,29 @@ class Strings {
     // Oficjalne brzmienie Apple i Google w języku polskim.
     'account.signInApple': 'Zaloguj się przez Apple',
     'account.signInGoogle': 'Zaloguj się przez Google',
+    'account.signInEmail': 'Kontynuuj przez e-mail',
     'account.working': 'Logowanie…',
     'account.provider.apple': 'Apple',
     'account.provider.google': 'Google',
+    'account.provider.email': 'e-mail',
+    'account.provider.firebase': 'konto',
+    'account.email.title': 'Logowanie przez e-mail',
+    'account.email.createTitle': 'Załóż konto',
+    'account.email.address': 'Adres e-mail',
+    'account.email.password': 'Hasło',
+    'account.email.passwordHint': 'Co najmniej {count} znaków',
+    'account.email.showPassword': 'Pokaż hasło',
+    'account.email.hidePassword': 'Ukryj hasło',
+    'account.email.signIn': 'ZALOGUJ',
+    'account.email.create': 'ZAŁÓŻ KONTO',
+    'account.email.noAccount': 'Nie masz konta? Załóż je',
+    'account.email.haveAccount': 'Masz już konto? Zaloguj się',
+    'account.email.forgot': 'Nie pamiętasz hasła?',
+    'account.email.resetSent':
+        'Jeśli {email} ma konto, wysłaliśmy na ten adres link do zmiany hasła.',
+    'account.email.reauthBody':
+        'Aby usunąć konto, wpisz jeszcze raz swoje hasło.',
+    'account.deleteCancelled': 'Nic nie zostało usunięte',
     'account.linkedWith': 'Zalogowano przez {provider}',
     'account.linkedSince': 'Od {date}',
     'account.signedOutHint':
@@ -866,20 +912,18 @@ class Strings {
     'account.delete': 'USUŃ MOJE KONTO',
     'account.deleteTitle': 'Usunąć konto?',
     'account.deleteBody':
-        'Usuwamy Twoje konto, logowanie na tym telefonie i każde powiązanie '
-        'między Tobą a rozegranymi grami.\n\nSame wyniki zostają w tablicy, ale '
-        'bez powiązania z Tobą: ich usunięcie zmieniłoby miejsca wszystkich '
-        'innych. Rekord na tym telefonie też zostaje i możesz grać dalej.',
+        'Usuwamy Twoje konto, logowanie na tym telefonie i wszystkie Twoje '
+        'wyniki z tablicy.\n\nRekord na tym telefonie zostaje i możesz grać '
+        'dalej.',
     'account.deleteContinue': 'DALEJ',
     'account.deleteConfirmTitle': 'Tego nie można cofnąć',
     'account.deleteConfirmBody':
-        'Konta nie da się odzyskać i nie będzie już sposobu, aby wykazać, że te '
-        'gry były Twoje.',
+        'Nie da się odzyskać ani konta, ani tych wyników.',
     'account.deleteConfirm': 'USUŃ NA ZAWSZE',
     'account.deleteCancel': 'ZACHOWAJ KONTO',
     'account.deleted': 'Konto usunięte',
     'account.deletedRuns':
-        'Konto usunięte — {count} gier zostaje bez właściciela',
+        'Konto usunięte — usunięto wyniki z tablicy: {count}',
     'account.error.offline':
         'Brak połączenia — zaloguj się ponownie, gdy wrócisz online.',
     'account.error.accounts_disabled':
@@ -902,5 +946,14 @@ class Strings {
         'To logowanie nie zwróciło nic do weryfikacji. Spróbuj ponownie.',
     'account.error.unknown':
         'Logowanie nie zostało ukończone. Spróbuj ponownie.',
+    'account.error.email_invalid': 'Ten adres e-mail wygląda na niepoprawny.',
+    'account.error.email_wrong': 'Nieprawidłowy e-mail lub hasło.',
+    'account.error.email_taken':
+        'Konto z tym adresem już istnieje — zaloguj się.',
+    'account.error.email_weak':
+        'Hasło jest za słabe — użyj co najmniej 6 znaków.',
+    'account.error.other_method':
+        'Ten adres loguje się już inaczej — spróbuj przez Apple lub Google.',
+    'account.error.disabled': 'To konto zostało zablokowane.',
   };
 }

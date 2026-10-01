@@ -18,9 +18,9 @@
 ///
 /// **Where an ad may appear**, and it is a short list on purpose (SPEC §4.10): in
 /// the shop, as a way to earn Sparks beside the other way, and on the game-over
-/// overlay, as an optional extra on the run just finished. Never an interstitial,
-/// never before a duel, never on launch. An ad that is not asked for is an ad shown
-/// *at* somebody.
+/// overlay, as an optional extra on the run just finished. Never before a duel,
+/// never on launch. The one ad the player does not ask for — between solo games
+/// — is not this file's: it lives under its own rules in `interstitial_ads.dart`.
 ///
 /// **And it is hidden when it would not work.** The button is drawn only when an ad
 /// is already in hand *and* the server says there is allowance left and the

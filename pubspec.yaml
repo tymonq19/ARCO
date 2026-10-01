@@ -25,6 +25,8 @@ dependencies:
   google_sign_in: ^7.2.0
   purchases_flutter: ^10.13.2
   google_mobile_ads: ^9.1.0
+  firebase_core: ^4.15.0
+  firebase_auth: ^6.7.0
 
 dev_dependencies:
   flutter_test:

@@ -1,0 +1,62 @@
+{
+  "project_info": {
+    "project_number": "333057111778",
+    "project_id": "arco-jtadevs",
+    "storage_bucket": "arco-jtadevs.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:333057111778:android:73d4b71aecefe26b6e90bb",
+        "android_client_info": {
+          "package_name": "com.jtadevs.arco"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "333057111778-jts7ti0bhq5lme4tn01h14ur1uo0vbmf.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.jtadevs.arco",
+            "certificate_hash": "96335b06b982e13fd33e8f9ef286d25df8a9392f"
+          }
+        },
+        {
+          "client_id": "333057111778-m2jr5iapj0r83pjk6skfr7k6sb7737hu.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.jtadevs.arco",
+            "certificate_hash": "6f3aad3ede9b1b98fdf2c40db4dc9011ca37c9df"
+          }
+        },
+        {
+          "client_id": "333057111778-o03o8g6q35sia00lanuulleti175ghos.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDQ2magPPZX4ofymtgLZK3wrbYkOIInR1k"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "333057111778-o03o8g6q35sia00lanuulleti175ghos.apps.googleusercontent.com",
+              "client_type": 3
+            },
+            {
+              "client_id": "333057111778-8npank03cq5ce2oh54v34gcf7k431rgi.apps.googleusercontent.com",
+              "client_type": 2,
+              "ios_info": {
+                "bundle_id": "com.jtadevs.arco"
+              }
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

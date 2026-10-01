@@ -90,6 +90,7 @@ class AccountLink {
     required this.credentials,
     required this.provider,
     required this.outcome,
+    this.method,
     this.name,
     this.movedScores = 0,
     this.bestScore,
@@ -104,8 +105,13 @@ class AccountLink {
 
   final PlayerCredentials credentials;
 
-  /// `apple` or `google`, as the server named it back.
+  /// `firebase` (or `apple` / `google` for a direct sign-in), as the server
+  /// named it back.
   final String provider;
+
+  /// How a Firebase sign-in was made — `apple`, `google` or `email` — or null.
+  final String? method;
+
   final AccountLinkOutcome outcome;
   final String? name;
 
@@ -149,6 +155,7 @@ class AccountLink {
     return AccountLink(
       credentials: credentials,
       provider: provider,
+      method: j['method'] as String?,
       outcome: outcomeByName(j['outcome'] as String?),
       name: j['name'] as String?,
       movedScores: (j['movedScores'] as num?)?.toInt() ?? 0,
@@ -281,15 +288,20 @@ class HealthInfo {
     required this.version,
     required this.rooms,
     this.accounts = const <String>[],
+    this.firebase = const <String>[],
     this.purchases = false,
   });
   final bool ok;
   final String version;
   final int rooms;
 
-  /// Sign-in providers this deployment actually accepts (SPEC §4.5); empty
-  /// means the feature is off, so a client offers no sign-in at all.
+  /// Direct Apple / Google sign-in this deployment accepts (SPEC §4.5). Read by
+  /// builds up to 1.0.0+6 only; this build signs in through Firebase.
   final List<String> accounts;
+
+  /// The Firebase sign-in methods this deployment accepts — `apple`, `google`,
+  /// `email` (SPEC §4.5). Empty means sign-in is off, so the app offers none.
+  final List<String> firebase;
 
   /// Whether this deployment can take money at all (SPEC §4.9). False means the
   /// shop offers no unlock, for the same reason an empty [accounts] means no
@@ -981,6 +993,9 @@ class ApiClient {
       accounts: <String>[
         for (final p in (j['accounts'] as List?) ?? const []) '$p',
       ],
+      firebase: <String>[
+        for (final m in (j['firebase'] as List?) ?? const []) '$m',
+      ],
       purchases: j['purchases'] == true,
     );
   }
@@ -1161,7 +1176,8 @@ class ApiClient {
     throw _failure(res, j);
   }
 
-  /// `POST /api/account/link` — signs in with Apple or Google (SPEC §4.5).
+  /// `POST /api/account/link` — attaches the account a Firebase ID token proves
+  /// (SPEC §4.5).
   ///
   /// [credentials] are **optional** and decide which half of the flow this is:
   /// with them the player we already are gains the account (or is merged into
@@ -1201,10 +1217,8 @@ class ApiClient {
   }
 
   /// `DELETE /api/players/me` — deletes the player, its account, its credentials
-  /// and every link between the person and their runs (SPEC §4.5). Returns the
-  /// number of score rows that were anonymised rather than deleted: a verified
-  /// run stays on the board, because removing it would restate everybody else's
-  /// rank.
+  /// and its runs on the leaderboard (SPEC §4.5). Returns how many score rows
+  /// were deleted.
   ///
   /// Never gated on the account feature switch, so it works for a player that
   /// only ever had the anonymous identity of §4.4.
@@ -1217,7 +1231,7 @@ class ApiClient {
     );
     final j = _tryDecode(res.body);
     if (res.statusCode == 200 && j?['ok'] == true) {
-      return (j!['scoresAnonymised'] as num?)?.toInt() ?? 0;
+      return (j!['scoresDeleted'] as num?)?.toInt() ?? 0;
     }
     throw _failure(res, j);
   }

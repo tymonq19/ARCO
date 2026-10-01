@@ -14,6 +14,7 @@ import '../game/input/keyboard_input.dart';
 import '../game/render/game_view.dart';
 import '../services/ads_gateway.dart';
 import '../services/ads_service.dart';
+import '../services/interstitial_ads.dart';
 import '../services/api_client.dart';
 import '../services/audio_service.dart';
 import '../services/haptics.dart';
@@ -115,6 +116,10 @@ class _SoloScreenState extends State<SoloScreen> with WidgetsBindingObserver {
       // (SPEC §4.10). It asks the server for the allowance and preloads an ad; the
       // button appears only if both answer yes, so it is instant or absent.
       unawaited(context.read<AdsService>().refresh());
+      // Counts the run towards the ad between games, and preloads that ad when
+      // this run makes one due — it is shown on the way out, never over the
+      // result.
+      unawaited(context.read<InterstitialService>().gameFinished());
     }
     if (mounted) setState(() {});
   }
@@ -133,7 +138,14 @@ class _SoloScreenState extends State<SoloScreen> with WidgetsBindingObserver {
     final s = Strings.read(context);
     final ads = context.read<AdsService>();
     context.read<AudioService>().play(Sfx.click);
+    final interstitials = context.read<InterstitialService>();
     final report = await ads.watch(AdPlacementId.gameOver);
+    // An ad the player chose to watch is an ad break: the next one between games
+    // is counted from here.
+    if (report.kind == AdReportKind.credited ||
+        report.kind == AdReportKind.awaitingServer) {
+      await interstitials.adWatched();
+    }
     if (!mounted) return;
     switch (report.kind) {
       case AdReportKind.credited:
@@ -270,6 +282,13 @@ class _SoloScreenState extends State<SoloScreen> with WidgetsBindingObserver {
         ),
       );
     }
+  }
+
+  /// Leaves the score screen — the moment the ad between games may appear, if
+  /// one is due and already loaded (see [InterstitialService]).
+  Future<void> _leave(VoidCallback then) async {
+    await context.read<InterstitialService>().showIfDue();
+    if (mounted) then();
   }
 
   void _retry() {
@@ -701,13 +720,13 @@ class _SoloScreenState extends State<SoloScreen> with WidgetsBindingObserver {
             ),
           ],
           const SizedBox(height: 18),
-          NeonButton(label: s.t('solo.retry'), onPressed: _retry),
+          NeonButton(label: s.t('solo.retry'), onPressed: () => _leave(_retry)),
           const SizedBox(height: 10),
           NeonButton(
             label: s.t('common.home'),
             filled: false,
             color: theme.textDim,
-            onPressed: () => Navigator.of(context).maybePop(),
+            onPressed: () => _leave(() => Navigator.of(context).maybePop()),
           ),
         ],
       ),

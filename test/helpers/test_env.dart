@@ -12,6 +12,7 @@ import 'package:arco/services/account_offer.dart';
 import 'package:arco/services/account_service.dart';
 import 'package:arco/services/ads_gateway.dart';
 import 'package:arco/services/ads_service.dart';
+import 'package:arco/services/interstitial_ads.dart';
 import 'package:arco/services/api_client.dart';
 import 'package:arco/services/audio_service.dart';
 import 'package:arco/services/duel_client.dart';
@@ -48,6 +49,8 @@ class TestEnv {
     required this.store,
     required this.ads,
     required this.adsGateway,
+    required this.interstitials,
+    required this.interstitialGateway,
   });
 
   final Storage storage;
@@ -92,6 +95,10 @@ class TestEnv {
   /// from here without a device and without an AdMob account.
   final FakeAdsGateway adsGateway;
 
+  /// The ad between solo games (SPEC 4.10) over [interstitialGateway].
+  final InterstitialService interstitials;
+  final FakeInterstitialGateway interstitialGateway;
+
   /// When the offer may be shown, and the memory of it being waved away.
   AccountOffer get offer => accounts.offer;
 }
@@ -128,6 +135,7 @@ Future<TestEnv> createTestEnv({
   bool premium = false,
   FakeAdsGateway? adsGateway,
   AdOffer? adOffer,
+  FakeInterstitialGateway? interstitialGateway,
 }) async {
   // Items this player has bought (SPEC 4.8), seeded into the fake server *and*
   // into this device's shop cache — which is what a device that has synced once
@@ -206,7 +214,29 @@ Future<TestEnv> createTestEnv({
     settings: settings,
     now: now,
   );
+  // No interstitial unit by default, like a build nobody configured: no screen
+  // ever stops for an ad between games unless a test asks for one.
+  final breaks =
+      interstitialGateway ?? FakeInterstitialGateway(available: false);
+  final adsService = AdsService(
+    gateway: ads,
+    api: client,
+    identity: identity,
+    shop: shop,
+    // A widget test drives frames by hand, so the poll for the server's credit
+    // has to finish inside a handful of pumps rather than a handful of seconds.
+    pollAttempts: 3,
+    pollDelay: const Duration(milliseconds: 10),
+  );
   return TestEnv(
+    interstitialGateway: breaks,
+    interstitials: InterstitialService(
+      gateway: breaks,
+      consent: ads,
+      storage: storage,
+      isPremium: () => shop.premium || adsService.premium,
+      now: now,
+    ),
     storage: storage,
     settings: settings,
     audio: AudioService(muted: true),
@@ -224,16 +254,7 @@ Future<TestEnv> createTestEnv({
       shop: shop,
     ),
     adsGateway: ads,
-    ads: AdsService(
-      gateway: ads,
-      api: client,
-      identity: identity,
-      shop: shop,
-      // A widget test drives frames by hand, so the poll for the server's credit
-      // has to finish inside a handful of pumps rather than a handful of seconds.
-      pollAttempts: 3,
-      pollDelay: const Duration(milliseconds: 10),
-    ),
+    ads: adsService,
     // iOS by default, which is where Apple has to come first (SPEC 4.5); a test
     // about the Android order passes the platform in.
     accounts: AccountService(
@@ -263,6 +284,7 @@ Widget wrapApp(TestEnv env, Widget home, {Map<String, WidgetBuilder>? routes}) {
       ChangeNotifierProvider<ShopService>.value(value: env.shop),
       ChangeNotifierProvider<PurchaseService>.value(value: env.purchases),
       ChangeNotifierProvider<AdsService>.value(value: env.ads),
+      Provider<InterstitialService>.value(value: env.interstitials),
     ],
     // Mirrors the shell in `main()`: the same localization delegates, the same
     // Settings-driven locale and the same Settings-driven [GameTheme] provided
@@ -431,10 +453,10 @@ class FakeApiClient extends ApiClient {
   Completer<void>? createPlayerDelay;
   Completer<void>? playerMeDelay;
 
-  /// What `GET /api/health` advertises under `accounts` (SPEC 4.5). Empty by
+  /// What `GET /api/health` advertises under `firebase` (SPEC 4.5). Empty by
   /// default, which is a deployment with sign-in switched off: no screen shows
   /// anything about it, so every test that predates accounts is unaffected.
-  List<String> accounts = const <String>[];
+  List<String> signInMethods = const <String>[];
 
   /// The credential `POST /api/account/link` issues; it deliberately differs
   /// from [issued], so a test can tell the swap happened.
@@ -451,7 +473,7 @@ class FakeApiClient extends ApiClient {
   ApiException? linkFailureOnce;
 
   /// What `DELETE /api/players/me` reports, unless [deleteFailure] is set.
-  int scoresAnonymised = 0;
+  int scoresDeleted = 0;
   ApiException? deleteFailure;
 
   int leaderboardCalls = 0;
@@ -465,6 +487,10 @@ class FakeApiClient extends ApiClient {
   /// What each link call carried, in order.
   final List<PlayerCredentials?> linkCredentials = <PlayerCredentials?>[];
   final List<String> linkProviders = <String>[];
+
+  /// The Firebase sign-in method the link answers name (`method`), as the server
+  /// reads it from the token.
+  String? linkMethod = 'apple';
   final List<String> linkTokens = <String>[];
 
   /// What each submission carried, in order.
@@ -484,7 +510,12 @@ class FakeApiClient extends ApiClient {
   Future<HealthInfo> health() async {
     healthCalls++;
     if (offline) throw const ApiException(ApiErrorKind.network, 'offline');
-    return HealthInfo(ok: true, version: '1.0.0', rooms: 0, accounts: accounts);
+    return HealthInfo(
+      ok: true,
+      version: '1.0.0',
+      rooms: 0,
+      firebase: signInMethods,
+    );
   }
 
   @override
@@ -509,6 +540,7 @@ class FakeApiClient extends ApiClient {
         AccountLink(
           credentials: linkIssued,
           provider: provider,
+          method: linkMethod,
           // Without credentials the account is created or handed back; with them
           // the player we already were gains it (SPEC 4.5).
           outcome: credentials == null
@@ -529,7 +561,7 @@ class FakeApiClient extends ApiClient {
     if (offline) throw const ApiException(ApiErrorKind.network, 'offline');
     final failure = deleteFailure;
     if (failure != null) throw failure;
-    return scoresAnonymised;
+    return scoresDeleted;
   }
 
   @override
@@ -1119,6 +1151,42 @@ UnlockProduct testUnlock() =>
 /// It deliberately **never returns an amount of Sparks**, just like the real one: a
 /// gateway that did would be a phone deciding how much it had earned, which is the
 /// whole thing a rewarded ad must not allow.
+/// Stands in for the interstitial SDK: fills or not, counts what it was asked.
+class FakeInterstitialGateway implements InterstitialGateway {
+  FakeInterstitialGateway({this.available = true, this.fills = true});
+
+  @override
+  bool available;
+
+  /// Whether a request would fill.
+  bool fills;
+
+  bool _loaded = false;
+  int loadCalls = 0;
+  int showCalls = 0;
+
+  @override
+  bool get loaded => _loaded;
+
+  @override
+  Future<bool> load() async {
+    loadCalls++;
+    if (!available || !fills) return false;
+    return _loaded = true;
+  }
+
+  @override
+  Future<bool> show() async {
+    if (!_loaded) return false;
+    showCalls++;
+    _loaded = false;
+    return true;
+  }
+
+  @override
+  Future<void> dispose() async {}
+}
+
 class FakeAdsGateway implements AdsGateway {
   FakeAdsGateway({
     this.available = true,
@@ -1304,17 +1372,57 @@ class FakeNativeSignIn implements NativeSignIn {
   final List<SignInProvider> calls = <SignInProvider>[];
   int forgetCalls = 0;
 
+  /// What the e-mail form handed over, per e-mail sign-in.
+  final List<EmailSignIn> emailForms = <EmailSignIn>[];
+
+  /// Password-reset e-mails "sent", by address; [resetFailure] fails them.
+  final List<String> resets = <String>[];
+  String? resetFailure;
+
+  /// How [NativeSignIn.deleteUser] goes: [deleteUserCancels] plays the player
+  /// backing out of signing in again, [deleteUserFailure] a refusal, and
+  /// [deleteAsksPassword] an e-mail account that has to type its password.
+  bool deleteUserCancels = false;
+  String? deleteUserFailure;
+  bool deleteAsksPassword = false;
+  int deleteUserCalls = 0;
+  final List<String?> passwordsGiven = <String?>[];
+
   @override
   Future<bool> isAvailable(SignInProvider provider) async =>
       available.contains(provider);
 
   @override
-  Future<String?> identityToken(SignInProvider provider) async {
+  Future<String?> identityToken(
+    SignInProvider provider, {
+    EmailSignIn? email,
+  }) async {
     calls.add(provider);
+    if (email != null) emailForms.add(email);
     if (unavailable) throw const SignInUnavailable('no sheet here');
     final code = failure;
     if (code != null) throw SignInFailure(code);
     return cancel ? null : token;
+  }
+
+  @override
+  Future<void> sendPasswordReset(String email) async {
+    final code = resetFailure;
+    if (code != null) throw SignInFailure(code);
+    resets.add(email);
+  }
+
+  @override
+  Future<bool> deleteUser({Future<String?> Function()? askPassword}) async {
+    deleteUserCalls++;
+    if (deleteAsksPassword) {
+      final password = await askPassword?.call();
+      passwordsGiven.add(password);
+      if (password == null || password.isEmpty) return false;
+    }
+    final code = deleteUserFailure;
+    if (code != null) throw SignInFailure(code);
+    return !deleteUserCancels;
   }
 
   @override

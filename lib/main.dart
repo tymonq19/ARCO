@@ -1,3 +1,5 @@
+import 'package:firebase_core/firebase_core.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
@@ -8,6 +10,7 @@ import 'app/game_theme.dart';
 import 'app/settings.dart';
 import 'app/strings.dart';
 import 'app/theme.dart';
+import 'firebase_options.dart';
 import 'services/account_offer.dart';
 import 'services/account_service.dart';
 import 'services/ads_gateway.dart';
@@ -15,6 +18,7 @@ import 'services/ads_service.dart';
 import 'services/api_client.dart';
 import 'services/audio_service.dart';
 import 'services/haptics.dart';
+import 'services/interstitial_ads.dart';
 import 'services/native_sign_in.dart';
 import 'services/player_identity.dart';
 import 'services/purchase_gateway.dart';
@@ -41,7 +45,31 @@ Future<void> main() async {
   final audio = AudioService(muted: !settings.sound);
   // Preloading the effects must not delay the first frame.
   audio.init();
-  runApp(ArcoApp(storage: storage, settings: settings, audio: audio));
+  runApp(
+    ArcoApp(
+      storage: storage,
+      settings: settings,
+      audio: audio,
+      firebaseReady: await _startFirebase(),
+    ),
+  );
+}
+
+/// Starts Firebase, which sign-in runs on (SPEC §4.5). False in a build with no
+/// Firebase configuration yet — `lib/firebase_options.dart` is then the
+/// placeholder — and on the web, which offers no sign-in anyway; the app is
+/// fully playable either way and simply shows no sign-in buttons.
+Future<bool> _startFirebase() async {
+  if (kIsWeb) return false;
+  try {
+    await Firebase.initializeApp(
+      options: DefaultFirebaseOptions.currentPlatform,
+    );
+    return true;
+  } on Object catch (e) {
+    debugPrint('sign-in unavailable: Firebase did not start: $e');
+    return false;
+  }
 }
 
 /// Application shell: providers, the selected [GameTheme] and the named routes.
@@ -53,8 +81,10 @@ class ArcoApp extends StatefulWidget {
     required this.audio,
     this.secrets,
     this.signIn,
+    this.firebaseReady = false,
     this.purchases,
     this.ads,
+    this.interstitials,
   });
 
   final Storage storage;
@@ -65,9 +95,12 @@ class ArcoApp extends StatefulWidget {
   /// unless a test hands over something else.
   final SecretStore? secrets;
 
-  /// The native Apple / Google sheets (SPEC §4.5). Neither provider can run on a
-  /// simulator without configured client ids, so a test hands over a fake.
+  /// Signing in through Firebase (SPEC §4.5). It cannot run without a
+  /// configured Firebase project, so a test hands over a fake.
   final NativeSignIn? signIn;
+
+  /// Whether Firebase started; without it the app offers no sign-in at all.
+  final bool firebaseReady;
 
   /// The store (SPEC §4.9). StoreKit and Google Play Billing cannot run in a
   /// test or on an unconfigured simulator, so a test hands over a fake — and a
@@ -80,6 +113,10 @@ class ArcoApp extends StatefulWidget {
   /// configured, so a test hands over a fake — and a build with no unit gets one
   /// that reports itself unavailable, so no ad button is ever drawn.
   final AdsGateway? ads;
+
+  /// The ad between solo games (SPEC §4.10). The SDK cannot run in a test, and a
+  /// build with no interstitial unit gets one that is simply never available.
+  final InterstitialGateway? interstitials;
 
   @override
   State<ArcoApp> createState() => _ArcoAppState();
@@ -104,6 +141,7 @@ class _ArcoAppState extends State<ArcoApp> {
   late final ShopService _shop;
   late final PurchaseService _purchases;
   late final AdsService _ads;
+  late final InterstitialService _interstitials;
 
   /// Where the app opens. Read once, at launch: the selector below rebuilds
   /// [MaterialApp] whenever the theme or the language changes, and the
@@ -133,7 +171,7 @@ class _ArcoAppState extends State<ArcoApp> {
     _accounts = AccountService(
       api: _api,
       identity: _identity,
-      native: widget.signIn ?? PlatformSignIn(),
+      native: widget.signIn ?? FirebaseSignIn(ready: widget.firebaseReady),
       offer: AccountOffer(storage: widget.storage),
       storage: widget.storage,
     );
@@ -170,6 +208,14 @@ class _ArcoAppState extends State<ArcoApp> {
       identity: _identity,
       shop: _shop,
     );
+    // The ad between solo games rides on the same consent answer, and a player
+    // with the unlock never sees it — by the shop's word or the ad server's.
+    _interstitials = InterstitialService(
+      gateway: widget.interstitials ?? GoogleInterstitialAds(),
+      consent: _ads.gateway,
+      storage: widget.storage,
+      isPremium: () => _shop.premium || _ads.premium,
+    );
     // A solo score recorded while offline is retried once at app start; the
     // leaderboard and the solo screen retry it again when they open.
     WidgetsBinding.instance.addPostFrameCallback((_) async {
@@ -196,6 +242,7 @@ class _ArcoAppState extends State<ArcoApp> {
   @override
   void dispose() {
     widget.settings.removeListener(_onSettingsChanged);
+    _interstitials.dispose();
     _ads.dispose();
     _purchases.dispose();
     _shop.dispose();
@@ -218,6 +265,7 @@ class _ArcoAppState extends State<ArcoApp> {
         ChangeNotifierProvider<ShopService>.value(value: _shop),
         ChangeNotifierProvider<PurchaseService>.value(value: _purchases),
         ChangeNotifierProvider<AdsService>.value(value: _ads),
+        Provider<InterstitialService>.value(value: _interstitials),
       ],
       // SPEC 5.6: the language follows the Settings override, so the app
       // locale is rebuilt with it and Material's own strings (text selection

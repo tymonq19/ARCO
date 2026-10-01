@@ -34,17 +34,13 @@
 		<key>NSAllowsArbitraryLoads</key>
 		<true/>
 	</dict>
-	<!-- AdMob (SPEC §4.10). This is **Google's published test application id**,
-	     the same one in every sample app: it serves test ads to anybody and
-	     belongs to no account, which is what makes the whole rewarded-ad loop
-	     walkable before a human has signed up for AdMob. A real deployment
-	     replaces it with its own app id from the AdMob console — see SETUP.md
-	     §10. The Mobile Ads SDK reads this key at initialisation, and the app
+	<!-- AdMob (SPEC §4.10): the app id of "Arco Games" (iOS) in the AdMob
+	     account ca-app-pub-7945255836990149 — see SETUP.md §10. The Mobile Ads SDK reads this key at initialisation, and the app
 	     only initialises it when an ad unit is configured
 	     (`--dart-define=ADMOB_IOS_REWARDED_UNIT=…` or `ADMOB_TEST_ADS=on`), so a
 	     build that wants no ads never touches it. -->
 	<key>GADApplicationIdentifier</key>
-	<string>ca-app-pub-3940256099942544~1458002511</string>
+	<string>ca-app-pub-7945255836990149~8350379217</string>
 	<!-- Tilt controls read the accelerometer. -->
 	<key>NSMotionUsageDescription</key>
 	<string>Arco uses motion data so you can steer the paddle by tilting your phone.</string>
@@ -92,5 +88,22 @@
 	     Declaring it here stops App Store Connect asking on every upload. -->
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
+	<!-- Google Sign-In (SETUP.md 8.3): the iOS OAuth client of the Firebase
+	     project arco-jtadevs, the CLIENT_ID of GoogleService-Info.plist. -->
+	<key>GIDClientID</key>
+	<string>333057111778-8npank03cq5ce2oh54v34gcf7k431rgi.apps.googleusercontent.com</string>
+	<!-- Its reversed form is how Google's sheet hands control back to the app;
+	     without it the sheet opens and never returns. -->
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleTypeRole</key>
+			<string>Editor</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>com.googleusercontent.apps.333057111778-8npank03cq5ce2oh54v34gcf7k431rgi</string>
+			</array>
+		</dict>
+	</array>
 </dict>
 </plist>
