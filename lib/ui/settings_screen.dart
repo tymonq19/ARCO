@@ -14,6 +14,7 @@ import 'shop_screen.dart';
 import 'widgets/account_section.dart';
 import 'widgets/neon_button.dart';
 import 'widgets/neon_panel.dart';
+import 'widgets/privacy_section.dart';
 import 'widgets/shop_card.dart';
 import 'widgets/theme_preview.dart';
 
@@ -268,6 +269,9 @@ class _SettingsScreenState extends State<SettingsScreen> {
               // identity to delete, so a build with accounts off looks exactly
               // as it did before.
               const AccountSection(),
+              // The privacy policy, support, and the ad consent choice where
+              // Google requires a way back to it.
+              const PrivacySection(),
               NeonPanel(
                 padding: EdgeInsets.zero,
                 glow: false,

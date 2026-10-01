@@ -20,6 +20,7 @@ import 'db.dart';
 import 'http_util.dart';
 import 'leaderboard.dart';
 import 'logging.dart';
+import 'pages.dart';
 import 'name_filter.dart';
 import 'players.dart';
 import 'purchases.dart';
@@ -149,7 +150,9 @@ class ApiHandler {
     RateLimiter? adLimiter,
     this.sweepInterval = const Duration(seconds: 30),
     this.pingInterval = webSocketPingInterval,
-  }) : submitLimiter =
+    PublicPages? pages,
+  }) : pages = pages ?? PublicPages.load(log),
+       submitLimiter =
            submitLimiter ??
            RateLimiter(
              limit: scoreSubmissionsPerMinute,
@@ -191,6 +194,9 @@ class ApiHandler {
              limit: adCallbacksPerMinute,
              window: const Duration(minutes: 1),
            );
+
+  /// The privacy policy and support pages the stores link to.
+  final PublicPages pages;
 
   final LeaderboardService leaderboard;
   final PlayerService players;
@@ -281,6 +287,8 @@ class ApiHandler {
 
   late final Router router =
       Router(notFoundHandler: (_) => errorResponse(404, 'not_found'))
+        ..get('/privacy', pages.privacy)
+        ..get('/support', pages.support)
         ..get('/api/health', _health)
         ..get('/api/leaderboard', _leaderboard)
         ..get('/api/leaderboard/rank', _rank)

@@ -1243,6 +1243,16 @@ class FakeAdsGateway implements AdsGateway {
   @override
   Stream<void> get changes => _changes.stream;
 
+  /// Whether this "device" is somewhere Google requires a way back to the form.
+  bool privacyOptions = false;
+  int privacyOptionsShown = 0;
+
+  @override
+  Future<bool> privacyOptionsRequired() async => available && privacyOptions;
+
+  @override
+  Future<void> showPrivacyOptions() async => privacyOptionsShown++;
+
   @override
   Future<AdConsentState> refreshConsent() async {
     consentRefreshCalls++;

@@ -12,11 +12,13 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../../app/game_theme.dart';
+import '../../app/legal.dart';
 import '../../app/strings.dart';
 import '../../services/account_service.dart';
 import '../../services/native_sign_in.dart';
 import 'neon_button.dart';
 import 'neon_panel.dart';
+import 'privacy_section.dart';
 
 /// Signs in with [provider] the way its button promises: Apple's and Google's
 /// own sheets straight away, the e-mail form for e-mail. Backing out of the
@@ -296,6 +298,16 @@ class _EmailSheetState extends State<_EmailSheet> {
                       style: TextStyle(color: theme.accent, fontSize: 13),
                     ),
                   ),
+                  if (_create)
+                    TextButton(
+                      onPressed: () =>
+                          openLegalLink(context, LegalLinks.privacy),
+                      child: Text(
+                        s.t('account.email.privacy'),
+                        textAlign: TextAlign.center,
+                        style: TextStyle(color: theme.textDim, fontSize: 12),
+                      ),
+                    ),
                   if (!_create)
                     TextButton(
                       onPressed: _busy ? null : _reset,

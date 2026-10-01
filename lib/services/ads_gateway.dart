@@ -133,6 +133,14 @@ abstract interface class AdsGateway {
   /// launch, and never as a condition of playing.
   Future<AdConsentOutcome> requestConsent();
 
+  /// Whether Google requires this player to be able to change their ad consent
+  /// later — true in the EEA, the UK and Switzerland. Settings shows its "ad
+  /// privacy settings" row only then.
+  Future<bool> privacyOptionsRequired();
+
+  /// Shows Google's form for changing the consent choice, then re-reads it.
+  Future<void> showPrivacyOptions();
+
   /// Loads one rewarded ad, if consent allows and none is in hand. Returns
   /// whether there is one afterwards.
   Future<bool> load();
@@ -255,6 +263,37 @@ class GoogleRewardedAds implements AdsGateway {
     return state == AdConsentState.allowed
         ? AdConsentOutcome.obtained
         : AdConsentOutcome.refused;
+  }
+
+  @override
+  Future<bool> privacyOptionsRequired() async {
+    if (!available) return false;
+    if (_consent == AdConsentState.unknown) await refreshConsent();
+    try {
+      return await ConsentInformation.instance
+              .getPrivacyOptionsRequirementStatus() ==
+          PrivacyOptionsRequirementStatus.required;
+    } catch (e) {
+      debugPrint('UMP privacy options status unavailable: $e');
+      return false;
+    }
+  }
+
+  @override
+  Future<void> showPrivacyOptions() async {
+    if (!available) return;
+    try {
+      final dismissed = Completer<FormError?>();
+      await ConsentForm.showPrivacyOptionsForm(dismissed.complete);
+      final error = await dismissed.future.timeout(const Duration(minutes: 5));
+      if (error != null) {
+        debugPrint('UMP privacy options form failed: ${error.message}');
+      }
+    } catch (e) {
+      debugPrint('UMP privacy options form unavailable: $e');
+    }
+    // A withdrawn consent must stop the next request, so it is read back now.
+    _set(await _readConsent());
   }
 
   @override

@@ -20,6 +20,7 @@ export 'src/leaderboard.dart';
 export 'src/logging.dart';
 export 'src/name_blocklist.dart';
 export 'src/name_filter.dart';
+export 'src/pages.dart';
 export 'src/players.dart';
 export 'src/purchases.dart';
 export 'src/rate_limit.dart';

@@ -10,6 +10,7 @@ dependencies:
   arco_core:
     path: ../packages/arco_core
   crypto: ^3.0.7
+  markdown: ^7.3.1
   pointycastle: ^4.0.0
   shelf: ^1.4.2
   shelf_router: ^1.1.4

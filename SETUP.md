@@ -206,6 +206,11 @@ Oba sklepy potrzebują tego samego materiału, więc przygotuj go raz:
 - Nazwa **Arco**, krótki podtytuł i opis — najpierw po angielsku, potem po polsku.
 - Ikona 1024 na 1024, bez przezroczystości i bez zaokrąglonych narożników.
 - Zrzuty ekranu z wymaganych rozmiarów urządzeń. Cztery motywy dają ci wizualnie różne kadry za darmo.
+- **Polityka prywatności: `https://arco.fly.dev/privacy`** (renderowana przez serwer z `PRIVACY.md` — zmiana
+  tekstu to edycja tego pliku i `fly deploy`). **Strona wsparcia: `https://arco.fly.dev/support`.** Oba adresy
+  wpisz w App Store Connect (Privacy Policy URL, Support URL), w Play Console i w komunikacie zgody AdMob. W
+  aplikacji są w Ustawieniach → Prywatność, razem z „Ustawieniami prywatności reklam” (formularz zmiany zgody,
+  pokazywany tam, gdzie Google go wymaga).
 - Polityka prywatności pod publicznym URL. Trzymaj ją uczciwą i krótką: gra przechowuje nick, wyniki,
   przybliżony kraj z locale urządzenia oraz — tylko jeśli gracz się zaloguje — nieprzejrzysty identyfikator
   konta. **Logowanie e-mailem zmienia jedną rzecz:** adres e-mail i hasło (zahaszowane) trzyma Firebase

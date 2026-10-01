@@ -60,6 +60,10 @@ RUN apt-get update \
 # bundle/bin/server plus bundle/lib/ for any bundled native library.
 COPY --from=build --chown=arco:arco /out/bundle /app/bundle
 
+# The privacy policy the server renders at /privacy (server/lib/src/pages.dart),
+# straight from the repository's PRIVACY.md so the web page cannot drift from it.
+COPY --chown=arco:arco PRIVACY.md /app/PRIVACY.md
+
 # The SQLite database lives here; mount a volume to keep the leaderboard.
 VOLUME ["/app/data"]
 

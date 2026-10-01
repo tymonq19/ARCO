@@ -483,6 +483,14 @@ class Strings {
     'account.signInApple': 'Sign in with Apple',
     'account.signInGoogle': 'Sign in with Google',
     'account.signInEmail': 'Continue with e-mail',
+    'account.email.privacy':
+        'Creating an account means accepting the privacy policy',
+    'privacy.title': 'Privacy',
+    'privacy.policy': 'Privacy policy',
+    'privacy.adChoices': 'Ad privacy settings',
+    'privacy.support': 'Help and contact',
+    'privacy.openFailed':
+        'Could not open the page. It is at arco.fly.dev/privacy',
     'account.working': 'Signing in…',
     'account.provider.apple': 'Apple',
     'account.provider.google': 'Google',
@@ -872,6 +880,14 @@ class Strings {
     'account.signInApple': 'Zaloguj się przez Apple',
     'account.signInGoogle': 'Zaloguj się przez Google',
     'account.signInEmail': 'Kontynuuj przez e-mail',
+    'account.email.privacy':
+        'Zakładając konto, akceptujesz politykę prywatności',
+    'privacy.title': 'Prywatność',
+    'privacy.policy': 'Polityka prywatności',
+    'privacy.adChoices': 'Ustawienia prywatności reklam',
+    'privacy.support': 'Pomoc i kontakt',
+    'privacy.openFailed':
+        'Nie udało się otworzyć strony. Znajdziesz ją pod arco.fly.dev/privacy',
     'account.working': 'Logowanie…',
     'account.provider.apple': 'Apple',
     'account.provider.google': 'Google',
