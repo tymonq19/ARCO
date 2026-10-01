@@ -30,7 +30,8 @@ Logger silentLogger() => Logger(LogLevel.error, sink: (_) {});
 ///
 /// [accounts] switches Sign in with Apple / Google on (SPEC §4.5); it is off by
 /// default, exactly as a deployment with no client ids configured is. When it is
-/// on, [appleJwksUri] / [googleJwksUri] must point at a [FakeKeyServer] (or
+/// on, [appleJwksUri] / [googleJwksUri] / [firebaseJwksUri] must point at a
+/// [FakeKeyServer] (or
 /// [fetchSigningKeys] must answer), so no test ever reaches a real provider.
 ///
 /// [purchases] switches the one-time unlock on (SPEC §4.9), off by default in
@@ -69,6 +70,7 @@ Future<ArcoServer> bootServer({
   JwksFetcher? fetchSigningKeys,
   Uri? appleJwksUri,
   Uri? googleJwksUri,
+  Uri? firebaseJwksUri,
   Uri? revenueCatBaseUri,
   RevenueCatFetcher? fetchRevenueCat,
   JwksFetcher? fetchAdMobKeys,
@@ -106,6 +108,7 @@ Future<ArcoServer> bootServer({
     fetchSigningKeys: fetchSigningKeys,
     appleJwksUri: appleJwksUri,
     googleJwksUri: googleJwksUri,
+    firebaseJwksUri: firebaseJwksUri,
     revenueCatBaseUri: revenueCatBaseUri,
     fetchRevenueCat: fetchRevenueCat,
     fetchAdMobKeys: fetchAdMobKeys,

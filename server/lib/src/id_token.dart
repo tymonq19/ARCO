@@ -1,5 +1,5 @@
-/// Verification of the identity tokens Apple and Google hand the client
-/// (SPEC §4.5).
+/// Verification of the identity tokens Apple, Google and Firebase hand the
+/// client (SPEC §4.5).
 ///
 /// The product flow is: the player plays anonymously, at some point taps "keep
 /// my scores", the phone performs the native sign-in and receives a signed JWT,
@@ -86,7 +86,8 @@ class IdTokenException implements Exception {
 
   /// `malformed_token`, `unsupported_algorithm`, `unknown_key`,
   /// `bad_signature`, `wrong_issuer`, `wrong_audience`, `expired_token`,
-  /// `token_not_yet_valid`, `missing_subject` or `keys_unavailable`.
+  /// `token_not_yet_valid`, `missing_subject`, `unsupported_method` or
+  /// `keys_unavailable`.
   final String code;
   final String? detail;
 
@@ -106,10 +107,18 @@ class VerifiedIdToken {
     required this.provider,
     required this.subject,
     required this.expiresAt,
+    this.method,
   });
 
-  /// Provider name the token was verified against (`apple`, `google`).
+  /// Provider name the token was verified against (`apple`, `google`,
+  /// `firebase`).
   final String provider;
+
+  /// How the person signed in to Firebase — `apple`, `google` or `email` — for
+  /// a `firebase` token; null for the others, whose provider says it already.
+  /// Shown to the player, never part of the identity: one Firebase user can
+  /// sign in more than one way and is still one account.
+  final String? method;
 
   /// The provider's opaque, stable identifier for this person *for this app*.
   /// The only piece of the token that is ever stored.
@@ -500,6 +509,13 @@ class IdTokenVerifier {
         'iat ${issuedAt.toIso8601String()} is in the future',
       );
     }
+    final authTime = _secondsClaim(payload['auth_time']);
+    if (authTime != null && now.add(clockSkew).isBefore(authTime)) {
+      throw IdTokenException(
+        'token_not_yet_valid',
+        'auth_time ${authTime.toIso8601String()} is in the future',
+      );
+    }
 
     final subject = payload['sub'];
     if (subject is! String ||
@@ -511,13 +527,44 @@ class IdTokenVerifier {
       );
     }
 
+    final methods = provider.methods;
+    String? method;
+    if (methods != null) {
+      method = firebaseMethodOf(payload);
+      // Anything else a Firebase project can mint — `anonymous` above all, but
+      // also custom tokens or a provider switched on in the console later — is
+      // somebody we know nothing about, and accepting it would hand out
+      // accounts to whoever asks.
+      if (method == null || !methods.contains(method)) {
+        throw IdTokenException(
+          'unsupported_method',
+          'firebase sign_in_provider is not one of ${methods.join(', ')}',
+        );
+      }
+    }
+
     // `email`, `name` and Apple's private-relay address are present in some of
     // these tokens and are deliberately dropped here (SPEC §4.5).
     return VerifiedIdToken(
       provider: provider.name,
       subject: subject,
       expiresAt: exp,
+      method: method,
     );
+  }
+
+  /// The sign-in method of a Firebase token, in our own names, or null for one
+  /// this server has no name for. `firebase.sign_in_provider` is Firebase's
+  /// provider id: `apple.com`, `google.com`, `password`, `anonymous`, `custom`…
+  static String? firebaseMethodOf(Map<String, dynamic> payload) {
+    final firebase = payload['firebase'];
+    if (firebase is! Map<String, dynamic>) return null;
+    return switch (firebase['sign_in_provider']) {
+      'apple.com' => firebaseMethodApple,
+      'google.com' => firebaseMethodGoogle,
+      'password' => firebaseMethodEmail,
+      _ => null,
+    };
   }
 
   Map<String, dynamic> _decodeJsonSegment(String segment, String what) {
@@ -576,6 +623,7 @@ class AccountProvider {
     required this.issuers,
     required this.audiences,
     required this.keys,
+    this.methods,
   });
 
   /// Sign in with Apple. `aud` is the app's bundle id on iOS, or the Services
@@ -616,19 +664,69 @@ class AccountProvider {
     ),
   );
 
+  /// Firebase Authentication (SPEC §4.5). One provider for every way a player
+  /// signs in to the project — Apple, Google, e-mail — because Firebase hands
+  /// the app the same kind of token for all of them: an RS256 JWT whose `iss`
+  /// names the project and whose `aud` *is* the project id.
+  ///
+  /// That `aud` is the whole trust boundary, so the project must be Arco's own:
+  /// in a project shared with another app, an account made there would sign in
+  /// here. [methods] is which `firebase.sign_in_provider` values are accepted.
+  factory AccountProvider.firebase({
+    required String projectId,
+    required Set<String> methods,
+    required Logger log,
+    JwksFetcher? fetch,
+    Uri? jwksUri,
+  }) => AccountProvider(
+    name: firebaseProviderName,
+    issuers: {'https://securetoken.google.com/$projectId'},
+    audiences: {projectId},
+    methods: methods,
+    keys: JwksCache(
+      // The same keys Google publishes as X.509 certificates for this signer,
+      // in the JWK form [parseJwks] already reads.
+      uri:
+          jwksUri ??
+          Uri.parse(
+            'https://www.googleapis.com/service_accounts/v1/jwk/'
+            'securetoken@system.gserviceaccount.com',
+          ),
+      log: log,
+      fetch: fetch,
+    ),
+  );
+
   final String name;
   final Set<String> issuers;
   final Set<String> audiences;
   final JwksCache keys;
+
+  /// Accepted sign-in methods, for a provider that carries one in the token
+  /// (Firebase); null for Apple and Google, whose tokens mean one thing only.
+  final Set<String>? methods;
 }
 
 const String appleProviderName = 'apple';
 const String googleProviderName = 'google';
+const String firebaseProviderName = 'firebase';
+
+/// Sign-in methods of a Firebase token, as `GET /api/health` advertises them
+/// and the app names its buttons.
+const String firebaseMethodApple = 'apple';
+const String firebaseMethodGoogle = 'google';
+const String firebaseMethodEmail = 'email';
+const List<String> allFirebaseMethods = [
+  firebaseMethodApple,
+  firebaseMethodGoogle,
+  firebaseMethodEmail,
+];
 
 /// Provider names this build knows how to verify tokens for.
 const List<String> supportedProviderNames = [
   appleProviderName,
   googleProviderName,
+  firebaseProviderName,
 ];
 
 /// Whether [signature] is a PKCS#1 v1.5 SHA-256 signature of [message] under

@@ -306,7 +306,11 @@ class ApiHandler {
     'rooms': rooms.roomCount,
     // Which sign-ins this deployment accepts, so the client shows exactly the
     // buttons that will work instead of guessing. Empty when accounts are off.
-    'accounts': accounts.providerNames,
+    // `accounts` is the direct Apple / Google sign-in builds up to 1.0.0+6
+    // understand; `firebase` is the methods of a Firebase sign-in, which later
+    // builds use instead.
+    'accounts': accounts.directProviderNames,
+    'firebase': accounts.firebaseMethods,
     // Catalogue version this build serves (SPEC §4.8), so a client learns from
     // the call it already makes whether the shop has a kind it cannot draw.
     'catalogue': Catalogue.version,
@@ -680,11 +684,14 @@ class ApiHandler {
     if (refusedByBudget != null) return refusedByBudget;
     final (player: player, refusal: refusal) = await _requirePlayer(request);
     if (refusal != null) return refusal;
-    final anonymised = await players.delete(player!);
+    final deleted = await players.delete(player!);
     return jsonResponse(200, {
       'ok': true,
       'deleted': true,
-      'scoresAnonymised': anonymised,
+      'scoresDeleted': deleted,
+      // Builds up to 1.0.0+6 read this key and, when it is above zero, tell the
+      // player their runs stayed on the board. None did, so they get zero.
+      'scoresAnonymised': 0,
     });
   }
 

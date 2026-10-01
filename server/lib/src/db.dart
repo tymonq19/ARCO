@@ -1288,9 +1288,7 @@ class Db {
       _moveTokenUses = _db.prepare(
         'UPDATE id_token_uses SET player_id = ? WHERE player_id = ?',
       ),
-      _anonymiseScores = _db.prepare(
-        'UPDATE scores SET player_id = NULL WHERE player_id = ?',
-      ),
+      _deleteScoresOf = _db.prepare('DELETE FROM scores WHERE player_id = ?'),
       _newestScoreName = _db.prepare(
         'SELECT name FROM scores WHERE player_id = ? '
         'ORDER BY created_at DESC, id DESC LIMIT 1',
@@ -2113,7 +2111,7 @@ class Db {
   final PreparedStatement _moveScores;
   final PreparedStatement _moveSecrets;
   final PreparedStatement _moveTokenUses;
-  final PreparedStatement _anonymiseScores;
+  final PreparedStatement _deleteScoresOf;
   final PreparedStatement _newestScoreName;
   final PreparedStatement _setPlayerFacts;
   final PreparedStatement _deletePlayer;
@@ -2591,19 +2589,19 @@ class Db {
     return unlinked;
   });
 
-  /// Deletes [playerId] and anonymises the scores it owned (SPEC §4.5).
+  /// Deletes [playerId] and every score it owned (SPEC §4.5).
   ///
-  /// The runs stay on the leaderboard with `player_id = NULL`, exactly like a
-  /// row submitted without credentials: deleting them instead would silently
-  /// restate everyone else's rank, and a verified score is a fact about the
-  /// board rather than a fact about the person. What goes is every link
-  /// between the person and those rows — the account, the credentials and the
-  /// ledger.
+  /// The runs leave the leaderboard with the person: a row carries the name
+  /// they played under, so leaving it behind would keep their nick on the
+  /// board after they asked to be removed. Everyone below moves up, which is
+  /// the honest board once those runs are gone. Rows that were never owned —
+  /// submitted before player identity existed — cannot be tied to anyone and
+  /// stay.
   ///
-  /// Returns the number of score rows anonymised.
+  /// Returns the number of score rows deleted.
   int deletePlayer(String playerId) => _transact(() {
-    _anonymiseScores.execute([playerId]);
-    final anonymised = _db.updatedRows;
+    _deleteScoresOf.execute([playerId]);
+    final deleted = _db.updatedRows;
     _deleteSecretsOf.execute([playerId]);
     _deleteTokenUsesOf.execute([playerId]);
     // The shop state goes with the player (SPEC §4.8): a wallet, a shelf of
@@ -2631,7 +2629,7 @@ class Db {
     // it was itself absorbed by someone.
     _deleteAliasesOf.execute([playerId, playerId]);
     _deletePlayer.execute([playerId]);
-    return anonymised;
+    return deleted;
   });
 
   // --------------------------------------------- cosmetic items (SPEC §4.8)
@@ -3376,7 +3374,7 @@ class Db {
       _moveScores,
       _moveSecrets,
       _moveTokenUses,
-      _anonymiseScores,
+      _deleteScoresOf,
       _newestScoreName,
       _setPlayerFacts,
       _deletePlayer,

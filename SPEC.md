@@ -691,22 +691,40 @@ client issues one whenever it decides it wants that (e.g. after a run worth keep
   `last_seen_at` is moved forward on a successful authentication, coalesced to at most one write per minute per
   player. Credentials live in `player_secrets(id TEXT PK, player_id TEXT, secret_hash TEXT, created_at TEXT)`.
 
-### 4.5 Sign in with Apple / Google (accounts)
+### 4.5 Accounts: Firebase sign-in (Apple, Google, e-mail)
 An account is what makes a player's scores survive a lost phone and follow them to a second device. It is offered
 **during** play, never as a gate on it: the player plays anonymously (§4.4), and at a well-chosen moment the app
-offers "keep your scores and play on any device". The phone performs the native sign-in, receives a signed
-identity token, and posts it here.
+offers "keep your scores and play on any device". The phone signs in to **Firebase Authentication** — with Apple,
+Google or an e-mail address and password — receives a Firebase ID token, and posts it here.
 
-**Configuration.** `ACCOUNTS_ENABLED` (`on`|`off`, default `off`) switches the whole feature. `APPLE_CLIENT_IDS`
-and `GOOGLE_CLIENT_IDS` are comma-separated lists of the `aud` values we accept (≤ 8 each, ≤ 255 chars). A
-provider is offered only when it has at least one client id, so an Apple-only build simply leaves the Google list
-unset. `ACCOUNTS_ENABLED=on` with **no** client id at all is a startup error (exit 64): without an `aud` to check,
-a valid token minted for any other app would be accepted. With the feature off, `/api/account/*` answers
-`404 {"ok":false,"error":"accounts_disabled"}` and nothing else about the server changes.
+Firebase hands the app the same kind of token whichever way the player signed in, so the server verifies one
+provider, `firebase`. The identity is the Firebase **uid** (`sub`); how the player signed in is the claim
+`firebase.sign_in_provider` (`apple.com`, `google.com`, `password`), which the server reports as `method`
+(`apple`, `google`, `email`) but never makes part of the identity — one Firebase user that signs in two ways is
+one account. Any other sign-in provider, `anonymous` above all, is refused (`unsupported_method`): a Firebase
+anonymous user is nobody in particular.
+
+The direct Sign in with Apple / Google described below (provider `apple` / `google`) still works and is still
+verified, because builds up to 1.0.0+6 use it; later builds use Firebase only.
+
+**Configuration.** `ACCOUNTS_ENABLED` (`on`|`off`, default `off`) switches the whole feature.
+`FIREBASE_PROJECT_ID` is the Firebase project whose tokens are accepted: `aud` must equal it and `iss` must be
+`https://securetoken.google.com/<project id>`. It must be a project of Arco's own — every account in it can sign
+in here. `FIREBASE_SIGN_IN_METHODS` lists the accepted methods (`apple`, `google`, `email`; all three by default)
+and should match the console. `APPLE_CLIENT_IDS` and `GOOGLE_CLIENT_IDS` are comma-separated lists of the `aud`
+values accepted for the direct providers (≤ 8 each, ≤ 255 chars). A provider is offered only when it is
+configured. `ACCOUNTS_ENABLED=on` with **no** project id and no client id at all is a startup error (exit 64):
+without an `aud` to check, a valid token minted for any other app would be accepted. With the feature off,
+`/api/account/*` answers `404 {"ok":false,"error":"accounts_disabled"}` and nothing else about the server changes.
+
+`GET /api/health` advertises the Firebase methods under `firebase` and the direct providers under `accounts`. The
+two are separate on purpose: builds up to 1.0.0+6 draw a button for every name in `accounts` they know and post a
+raw Apple or Google token for it, which a Firebase-only deployment would refuse.
 
 **Token verification, server side.** Nothing the client claims about who it is is ever trusted; the subject comes
 only from a token that passed *every* check:
-- the signature, against the provider's published JWKS, fetched over **HTTPS only** (no redirects, size-capped)
+- the signature, against the provider's published JWKS (for Firebase, the JWK form of the
+  `securetoken@system.gserviceaccount.com` keys), fetched over **HTTPS only** (no redirects, size-capped)
   and cached — the provider's `max-age` clamped to 5 min … 24 h, one refresh when a token names an unknown `kid`
   (a rotation), at most one fetch attempt per minute, concurrent callers sharing the one in-flight fetch, and
   cached keys kept when a refresh fails so a provider outage cannot sign everyone out;
@@ -715,17 +733,19 @@ only from a token that passed *every* check:
 - `iss`, against the provider's own issuers (Google mints both `https://accounts.google.com` and
   `accounts.google.com`);
 - `aud`, against the configured client ids — a string or an array, at least one of which must match;
-- `exp`, and `nbf`/`iat` when present, with 60 s of clock skew either way;
-- a usable `sub` (≤ 255 chars).
+- `exp`, and `nbf`/`iat`/`auth_time` when present, with 60 s of clock skew either way;
+- a usable `sub` (≤ 255 chars);
+- for Firebase, a `firebase.sign_in_provider` among the configured methods.
 
 **What is stored: the provider name and its opaque `sub`, and nothing else.** The tokens carry an address (Apple's
 is usually a private-relay alias) and often a real name; both are dropped before storage, and `players` has no
-column to put them in (§4.3). We do not need them, and not having them keeps the privacy policy short. The token
+column to put them in (§4.3). For an e-mail account the address is held by Firebase, not by us. We do not need them, and not having them keeps the privacy policy short. The token
 itself is not stored either — only its SHA-256 digest, in the replay ledger below.
 
-- `POST /api/account/link` body `{"provider":"apple"|"google","idToken":"<jwt>"}`. The `Authorization` header of
-  §4.4 is **optional**, and decides which half of the flow this is.
-  `200 {"ok":true,"id":"<32 hex>","secret":"<43 chars>","name":"…"|null,"provider":"apple","outcome":"…",
+- `POST /api/account/link` body `{"provider":"firebase"|"apple"|"google","idToken":"<jwt>"}`. The `Authorization`
+  header of §4.4 is **optional**, and decides which half of the flow this is.
+  `200 {"ok":true,"id":"<32 hex>","secret":"<43 chars>","name":"…"|null,"provider":"firebase","method":"email",
+  "outcome":"…",
   "linkedAt":"…","createdAt":"…","movedScores":N,"bestScore":1234|null,"rank":7|null,"games":3}`.
   A **new credential is always issued** and no other device's is revoked. `outcome` is one of:
   - `created` — no credentials, and the account was unknown here: a new player was made for it.
@@ -737,7 +757,7 @@ itself is not stored either — only its SHA-256 digest, in the replay ledger be
   `400 {"error":"invalid_provider","providers":[…]}`, `401 invalid_credentials` (credentials present but wrong —
   never downgraded to anonymous), `401 {"error":"invalid_token","reason":"<code>"}` where `reason` is one of
   `malformed_token unsupported_algorithm unknown_key bad_signature wrong_issuer wrong_audience expired_token
-  token_not_yet_valid missing_subject`, `409 {"error":"already_linked","provider":"…"}`, `413` body > 8 KB,
+  token_not_yet_valid missing_subject unsupported_method`, `409 {"error":"already_linked","provider":"…"}`, `413` body > 8 KB,
   `429` (> 10 account calls / IP / minute), `503 keys_unavailable` when the provider's keys cannot be reached at
   all — which is our failure, not a bad token, so the client should retry rather than re-prompt.
 - **Merge.** If the provider subject already belongs to another player, the two are merged rather than refused.
@@ -764,10 +784,12 @@ itself is not stored either — only its SHA-256 digest, in the replay ledger be
   "provider":"…"}`. Detaches the account; the player, its credentials and every score it owns stay exactly as they
   are, anonymous again. Idempotent (`unlinked:false` when there was nothing to detach). The player's ledger rows
   go too, so a token captured before the unlink cannot walk back in through the retry path.
-- `DELETE /api/players/me` (credentials required) → `200 {"ok":true,"deleted":true,"scoresAnonymised":N}`.
-  Deletes the player, its account, every credential, its aliases and its ledger rows. Its score rows are
-  **anonymised** (`player_id = NULL`), not deleted: a verified run is a fact about the leaderboard, and erasing
-  rows would silently restate everyone else's rank. What goes is every link between the person and those runs.
+- `DELETE /api/players/me` (credentials required) → `200 {"ok":true,"deleted":true,"scoresDeleted":N,
+  "scoresAnonymised":0}`. Deletes the player, its account, every credential, its aliases, its ledger rows **and
+  every score row it owned**: each row carries the name it was played under, so leaving the rows would keep the
+  person's nick on the board after they asked to be removed. Everyone below moves up. Rows that were never owned
+  (stored before player identity existed) cannot be tied to anyone and stay. `scoresAnonymised` is always `0` and
+  exists only for builds up to 1.0.0+6, which read it and would otherwise say the runs stayed on the board.
   Apple requires an app that offers account creation to offer account deletion, so this route is **never** gated
   on `ACCOUNTS_ENABLED` and works for an anonymous player too.
 - `GET /api/players/me` additionally carries `"provider"` and `"linkedAt"` once an account is attached; both keys
@@ -1066,9 +1088,17 @@ them — between devices.
 Optional, off by default, and a **shortcut only** — the same standing as §4.9, and offered only to players who have
 not bought the unlock (§4.9). Every Spark an ad pays is earnable by playing, nothing in the game is behind an ad, and an ad is offered in exactly **two** places, both of which are a
 player already asking for something: in the shop, as a way to earn Sparks beside the other way, and on the solo
-game-over overlay, as an optional extra on the run just finished. **Never an interstitial, never before a duel,
-never on launch.** `test/services/ad_pin_test.dart` reads every file in `lib/` and fails if any ad format but the
-rewarded one is named.
+game-over overlay, as an optional extra on the run just finished. **Never before a duel, never on launch.**
+
+**The ad between games** is the one exception, and the one ad the player does not ask for: an interstitial on the
+way **out** of the solo score screen (RETRY or HOME, never over the result) after every **3rd** finished solo run,
+counted from the last ad of any kind (a rewarded ad watched counts). Never twice within **3 minutes**, never in a
+new player's first **5** runs, never after a duel, never for a player holding the unlock (§4.9), never without the
+same UMP consent the rewarded ad needs — where it is still open, the first break that falls due shows the form
+instead, once. An ad not yet loaded is skipped, never waited for. It pays nothing and has no server half: no
+callback, no ledger. Its rules live in `lib/services/interstitial_ads.dart`; `test/services/ad_pin_test.dart`
+reads every file in `lib/` and fails if a banner, app-open or native ad is named, or the interstitial is loaded
+anywhere else.
 
 **The architecture.** A client that says *"I watched an ad, give me Sparks"* is a Spark printer, and every phone
 would have one. So no client is asked. The reward is credited on exactly one signal: AdMob's **server-side

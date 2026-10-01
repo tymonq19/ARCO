@@ -42,6 +42,13 @@ void main() {
     jwksUri: keyServer.uri,
   );
 
+  AccountProvider firebase({Set<String>? methods}) => AccountProvider.firebase(
+    projectId: firebaseProject,
+    methods: methods ?? allFirebaseMethods.toSet(),
+    log: log,
+    jwksUri: keyServer.uri,
+  );
+
   IdTokenVerifier verifier({DateTime? now, Duration? skew}) => IdTokenVerifier(
     log: log,
     clockSkew: skew ?? idTokenClockSkew,
@@ -623,6 +630,86 @@ void main() {
       expect(document.maxAge, const Duration(seconds: 1234));
       keyServer.maxAge = null;
       expect((await fetchJwksOverHttps(keyServer.uri)).maxAge, isNull);
+    });
+  });
+
+  group('a Firebase token', () {
+    test('is accepted with the uid as subject and the method named', () async {
+      for (final (signInProvider, method) in [
+        ('apple.com', firebaseMethodApple),
+        ('google.com', firebaseMethodGoogle),
+        ('password', firebaseMethodEmail),
+      ]) {
+        final token = signIdToken(
+          key: providerKey,
+          claims: firebaseClaims(signInProvider: signInProvider),
+        );
+        final ok = await verifier().verify(firebase(), token);
+        expect(ok.provider, firebaseProviderName);
+        expect(ok.subject, 'kXq3Firebase0Uid9xYz');
+        expect(ok.method, method, reason: signInProvider);
+      }
+    });
+
+    test('from an anonymous or custom sign-in is refused', () async {
+      for (final signInProvider in ['anonymous', 'custom', 'phone']) {
+        final token = signIdToken(
+          key: providerKey,
+          claims: firebaseClaims(signInProvider: signInProvider),
+        );
+        expect(
+          await refusalOf(firebase(), token),
+          'unsupported_method',
+          reason: signInProvider,
+        );
+      }
+    });
+
+    test('with no firebase claim at all is refused', () async {
+      final claims = firebaseClaims()..remove('firebase');
+      final token = signIdToken(key: providerKey, claims: claims);
+      expect(await refusalOf(firebase(), token), 'unsupported_method');
+    });
+
+    test('from a method switched off on this server is refused', () async {
+      final token = signIdToken(
+        key: providerKey,
+        claims: firebaseClaims(signInProvider: 'password'),
+      );
+      expect(
+        await refusalOf(firebase(methods: {firebaseMethodApple}), token),
+        'unsupported_method',
+      );
+    });
+
+    test('from another Firebase project is refused', () async {
+      // Same signer, same key: only `aud` and `iss` tell the projects apart.
+      final otherAudience = signIdToken(
+        key: providerKey,
+        claims: firebaseClaims(audience: 'prawko-na-5'),
+      );
+      expect(await refusalOf(firebase(), otherAudience), 'wrong_audience');
+      final otherIssuer = signIdToken(
+        key: providerKey,
+        claims: firebaseClaims(
+          issuer: 'https://securetoken.google.com/prawko-na-5',
+        ),
+      );
+      expect(await refusalOf(firebase(), otherIssuer), 'wrong_issuer');
+    });
+
+    test('with an auth_time in the future is refused', () async {
+      final token = signIdToken(
+        key: providerKey,
+        claims: firebaseClaims(authTimeIn: const Duration(minutes: 10)),
+      );
+      expect(await refusalOf(firebase(), token), 'token_not_yet_valid');
+    });
+
+    test('is not accepted by the Apple or Google provider', () async {
+      final token = signIdToken(key: providerKey, claims: firebaseClaims());
+      expect(await refusalOf(apple(), token), 'wrong_issuer');
+      expect(await refusalOf(google(), token), 'wrong_issuer');
     });
   });
 }

@@ -220,8 +220,11 @@ class AdCallback {
   /// content, so a caller cannot choose it.
   final String transactionId;
 
-  /// Our player, from the signed `custom_data` (or `user_id`).
-  final String playerId;
+  /// Our player, from the signed `custom_data` (or `user_id`) — or null for a
+  /// callback that names nobody, which is what AdMob's own "verify URL" test in
+  /// the dashboard sends. It is answered once the signature has verified, and
+  /// credits nothing.
+  final String? playerId;
 
   /// Where the ad was offered, or null for a placement this build has no name
   /// for.
@@ -315,9 +318,6 @@ class AdCallback {
         (PlayerCredentials.isPlayerId(params['user_id'] ?? '')
             ? params['user_id']
             : null);
-    if (playerId == null) {
-      return (callback: null, reason: 'custom_data carries no Arco player id');
-    }
     final millis = int.tryParse(params['timestamp'] ?? '');
     if (millis == null || millis <= 0) {
       return (callback: null, reason: 'no usable timestamp');
@@ -809,16 +809,27 @@ class AdsService {
     // Verified. From here the callback is Google's word, and the only remaining
     // questions are whose wallet and how much — and the second of those is not
     // asked of the callback at all.
-    final playerId = await store.canonicalPlayerId(callback.playerId);
+    final named = callback.playerId;
+    if (named == null) {
+      // Google's word, naming nobody: the "verify URL" button in the AdMob
+      // dashboard, which has to see a 200 before it will save the address. There
+      // is no wallet to pay, so nothing is written.
+      log.info(
+        'ad callback verified with no player (an AdMob URL check?) '
+        'txn=${callback.transactionId} unit=${callback.adUnit}',
+      );
+      return const AdResult(200, {'ok': true, 'credited': false});
+    }
+    final playerId = await store.canonicalPlayerId(named);
     if (await store.playerById(playerId) == null) {
       log.warn(
-        'ad callback refused: no player ${callback.playerId} '
+        'ad callback refused: no player $named '
         '(txn=${callback.transactionId})',
       );
       return AdResult.error(
         404,
         unknownAdPlayerError,
-        extra: {'playerId': callback.playerId},
+        extra: {'playerId': named},
       );
     }
     final credit = await store.creditAdReward(

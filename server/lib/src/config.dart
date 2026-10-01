@@ -5,22 +5,28 @@ library;
 import 'id_token.dart';
 import 'logging.dart';
 
-/// Sign in with Apple / Google, as configured (SPEC §4.5).
+/// Sign-in, as configured (SPEC §4.5): Firebase Authentication, and the older
+/// direct Sign in with Apple / Google.
 ///
 /// The whole feature is off unless [enabled], and a provider is offered only
-/// when at least one client id is configured for it — so an Apple-only build
-/// simply leaves `GOOGLE_CLIENT_IDS` unset and the Google endpoint answers
-/// `invalid_provider`.
+/// when it is configured — Firebase by its project id, Apple and Google by at
+/// least one client id each.
 ///
-/// The client ids are the `aud` values a token may carry. They are the check
-/// that stops a perfectly valid token minted for somebody else's app from
-/// signing its bearer into Arco, which is why the server refuses to start with
-/// accounts enabled and none of them set.
+/// The project id and the client ids are the `aud` values a token may carry.
+/// They are the check that stops a perfectly valid token minted for somebody
+/// else's app from signing its bearer into Arco, which is why the server
+/// refuses to start with accounts enabled and none of them set.
 class AccountsConfig {
   const AccountsConfig({
     this.enabled = false,
     this.appleClientIds = const <String>{},
     this.googleClientIds = const <String>{},
+    this.firebaseProjectId,
+    this.firebaseMethods = const {
+      firebaseMethodApple,
+      firebaseMethodGoogle,
+      firebaseMethodEmail,
+    },
   });
 
   /// `ACCOUNTS_ENABLED=on`. Off by default, so a deployment that has not been
@@ -35,6 +41,15 @@ class AccountsConfig {
   /// ids, whichever the app asks tokens for.
   final Set<String> googleClientIds;
 
+  /// `FIREBASE_PROJECT_ID` — the Firebase project whose ID tokens are accepted.
+  /// It has to be a project of Arco's own: every account in it can sign in.
+  final String? firebaseProjectId;
+
+  /// `FIREBASE_SIGN_IN_METHODS` — which ways of signing in to that project are
+  /// accepted and advertised: any of `apple`, `google`, `email`; all three by
+  /// default. Should match what is switched on in the Firebase console.
+  final Set<String> firebaseMethods;
+
   /// Longest accepted client id, and how many may be listed per provider.
   static const int maxClientIdChars = 255;
   static const int maxClientIdsPerProvider = 8;
@@ -44,6 +59,15 @@ class AccountsConfig {
   List<String> get providers => [
     if (enabled && appleClientIds.isNotEmpty) appleProviderName,
     if (enabled && googleClientIds.isNotEmpty) googleProviderName,
+    if (enabled && firebaseProjectId != null) firebaseProviderName,
+  ];
+
+  /// Firebase sign-in methods to advertise, in a stable order; empty when
+  /// Firebase is not configured or the feature is off.
+  List<String> get advertisedFirebaseMethods => [
+    if (enabled && firebaseProjectId != null)
+      for (final method in allFirebaseMethods)
+        if (firebaseMethods.contains(method)) method,
   ];
 
   /// Whether [provider] is configured and usable.
@@ -59,18 +83,30 @@ class AccountsConfig {
   /// Client ids were configured but the feature is switched off, which is
   /// almost always a mistake worth a line in the log at startup.
   bool get hasUnusedClientIds =>
-      !enabled && (appleClientIds.isNotEmpty || googleClientIds.isNotEmpty);
+      !enabled &&
+      (appleClientIds.isNotEmpty ||
+          googleClientIds.isNotEmpty ||
+          firebaseProjectId != null);
 
   @override
   String toString() => enabled
       ? 'AccountsConfig(providers: ${providers.join(', ')}, '
-            'apple: ${appleClientIds.length}, google: ${googleClientIds.length})'
+            'apple: ${appleClientIds.length}, google: ${googleClientIds.length}'
+            '${firebaseProjectId == null ? '' : ', firebase: $firebaseProjectId '
+                      '[${advertisedFirebaseMethods.join(', ')}]'})'
       : 'AccountsConfig(disabled)';
 
-  /// Parses `ACCOUNTS_ENABLED`, `APPLE_CLIENT_IDS` and `GOOGLE_CLIENT_IDS`.
+  /// A Firebase project id: 6-30 characters of lowercase letters, digits and
+  /// hyphens, starting with a letter (Google's own rule for project ids).
+  static final RegExp _projectIdPattern = RegExp(
+    r'^[a-z][a-z0-9-]{4,28}[a-z0-9]$',
+  );
+
+  /// Parses `ACCOUNTS_ENABLED`, `APPLE_CLIENT_IDS`, `GOOGLE_CLIENT_IDS`,
+  /// `FIREBASE_PROJECT_ID` and `FIREBASE_SIGN_IN_METHODS`.
   ///
-  /// Throws [FormatException] when accounts are enabled with no client id for
-  /// any provider: that configuration would accept a token from anybody's app,
+  /// Throws [FormatException] when accounts are enabled with no provider
+  /// configured: that configuration would accept a token from anybody's app,
   /// so it must not start.
   factory AccountsConfig.fromEnvironment(String? Function(String key) read) {
     var enabled = false;
@@ -87,19 +123,52 @@ class AccountsConfig {
           );
       }
     }
+    final projectId = read('FIREBASE_PROJECT_ID')?.trim();
+    if (projectId != null &&
+        projectId.isNotEmpty &&
+        !_projectIdPattern.hasMatch(projectId)) {
+      throw FormatException(
+        'FIREBASE_PROJECT_ID is not a Firebase project id: "$projectId"',
+      );
+    }
     final config = AccountsConfig(
       enabled: enabled,
       appleClientIds: _clientIds('APPLE_CLIENT_IDS', read),
       googleClientIds: _clientIds('GOOGLE_CLIENT_IDS', read),
+      firebaseProjectId: projectId == null || projectId.isEmpty
+          ? null
+          : projectId,
+      firebaseMethods: _firebaseMethods(read),
     );
     if (enabled && config.providers.isEmpty) {
       throw const FormatException(
-        'ACCOUNTS_ENABLED=on needs APPLE_CLIENT_IDS and/or '
-        'GOOGLE_CLIENT_IDS: without a client id to check "aud" against, a '
-        'token minted for any other app would be accepted',
+        'ACCOUNTS_ENABLED=on needs FIREBASE_PROJECT_ID, or APPLE_CLIENT_IDS '
+        'and/or GOOGLE_CLIENT_IDS: without an audience to check "aud" '
+        'against, a token minted for any other app would be accepted',
       );
     }
     return config;
+  }
+
+  static Set<String> _firebaseMethods(String? Function(String key) read) {
+    final raw = read('FIREBASE_SIGN_IN_METHODS');
+    if (raw == null || raw.trim().isEmpty) return allFirebaseMethods.toSet();
+    final methods = <String>{};
+    for (final part in raw.split(',')) {
+      final method = part.trim().toLowerCase();
+      if (method.isEmpty) continue;
+      if (!allFirebaseMethods.contains(method)) {
+        throw FormatException(
+          'FIREBASE_SIGN_IN_METHODS holds "$method", expected any of '
+          '${allFirebaseMethods.join(', ')}',
+        );
+      }
+      methods.add(method);
+    }
+    if (methods.isEmpty) {
+      throw const FormatException('FIREBASE_SIGN_IN_METHODS names no method');
+    }
+    return methods;
   }
 
   static Set<String> _clientIds(String key, String? Function(String key) read) {

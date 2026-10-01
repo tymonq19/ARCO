@@ -1,4 +1,5 @@
-/// Sign in with Apple and Google, server side (SPEC §4.5).
+/// Signing in — through Firebase, or directly with Apple and Google — server
+/// side (SPEC §4.5).
 ///
 /// Token verification lives in `id_token.dart`; the storage transaction lives in
 /// `Db.linkAccount`. This file is the part in between: it decides which
@@ -77,9 +78,19 @@ Map<String, AccountProvider> accountProvidersFor(
   JwksFetcher? fetch,
   Uri? appleJwksUri,
   Uri? googleJwksUri,
+  Uri? firebaseJwksUri,
 }) {
   if (!config.enabled) return const <String, AccountProvider>{};
+  final projectId = config.firebaseProjectId;
   return {
+    if (projectId != null)
+      firebaseProviderName: AccountProvider.firebase(
+        projectId: projectId,
+        methods: config.firebaseMethods,
+        log: log,
+        fetch: fetch,
+        jwksUri: firebaseJwksUri,
+      ),
     if (config.appleClientIds.isNotEmpty)
       appleProviderName: AccountProvider.apple(
         audiences: config.appleClientIds,
@@ -126,9 +137,29 @@ class AccountService {
   /// [accountsDisabledError] without touching anything else the server does.
   bool get enabled => providers.isNotEmpty;
 
-  /// Provider names to advertise on `GET /api/health`, so a client knows which
-  /// sign-in buttons to show instead of guessing.
+  /// Provider names this server accepts tokens for.
   List<String> get providerNames => providers.keys.toList(growable: false);
+
+  /// The direct providers, as `GET /api/health`'s `accounts` advertises them.
+  ///
+  /// Firebase is deliberately not in this list: builds up to 1.0.0+6 read it
+  /// and would show a button for every name they know, posting a raw Apple or
+  /// Google token for each. Firebase has its own key, [firebaseMethods].
+  List<String> get directProviderNames => [
+    for (final name in providers.keys)
+      if (name != firebaseProviderName) name,
+  ];
+
+  /// The Firebase sign-in methods to advertise (`GET /api/health`'s
+  /// `firebase`), so the app shows exactly the buttons that will work.
+  List<String> get firebaseMethods {
+    final methods = providers[firebaseProviderName]?.methods;
+    if (methods == null) return const <String>[];
+    return [
+      for (final method in allFirebaseMethods)
+        if (methods.contains(method)) method,
+    ];
+  }
 
   /// Verifies [idToken] and attaches the account it proves to a player
   /// (SPEC §4.5).
@@ -218,6 +249,7 @@ class AccountService {
     }
     log.info(
       'account ${result.kind!.name} provider=${token.provider} '
+      '${token.method == null ? '' : 'method=${token.method} '}'
       'player=$playerId'
       '${result.movedScores > 0 ? ' moved=${result.movedScores}' : ''}',
     );
@@ -227,6 +259,9 @@ class AccountService {
       'secret': credential.secret,
       'name': result.name,
       'provider': token.provider,
+      // How this sign-in was made, for a Firebase account (`apple`, `google`,
+      // `email`), so the app can say which one the player used.
+      'method': ?token.method,
       'outcome': result.kind!.name,
       'linkedAt': result.linkedAt,
       'createdAt': result.createdAt,

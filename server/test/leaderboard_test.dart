@@ -55,6 +55,8 @@ void main() {
         // because this server boots with accounts switched off, which is the
         // default and what a deployment with no client ids configured gets.
         'accounts': <String>[],
+        // The Firebase sign-in methods, empty for the same reason.
+        'firebase': <String>[],
         // Catalogue version the cosmetic shop serves (SPEC §4.8), so a client
         // learns from the call it already makes whether the shop holds a kind
         // of item its build cannot draw.

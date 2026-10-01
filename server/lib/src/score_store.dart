@@ -463,8 +463,8 @@ class ScoreStore {
       await _send(_DbRequest(_nextId++, _Op.unlinkAccount, playerId: playerId))
           as bool;
 
-  /// Deletes [playerId], anonymising the scores it owned; returns how many
-  /// score rows were anonymised (SPEC §4.5).
+  /// Deletes [playerId] and the scores it owned; returns how many score rows
+  /// were deleted (SPEC §4.5).
   Future<int> deletePlayer(String playerId) async =>
       await _send(_DbRequest(_nextId++, _Op.deletePlayer, playerId: playerId))
           as int;

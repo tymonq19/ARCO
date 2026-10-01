@@ -243,22 +243,21 @@ class PlayerService {
   Future<List<PlayerStats>> boards(String playerId) =>
       store.playerBoards(playerId);
 
-  /// Deletes [player] and anonymises the runs it owned, returning how many
-  /// score rows were anonymised (SPEC §4.5).
+  /// Deletes [player] and the runs it owned, returning how many score rows
+  /// were deleted (SPEC §4.5).
   ///
   /// Never gated on the account feature switch: an anonymous player deserves
   /// deletion too, and Apple requires an app that offers account creation to
   /// offer account deletion, so this must not be switchable off.
   ///
-  /// The runs themselves stay on the leaderboard as anonymous rows — see
-  /// [Db.deletePlayer] for why erasing them instead would be the wrong trade.
+  /// The runs leave the leaderboard with the person — see [Db.deletePlayer].
   Future<int> delete(PlayerRow player) async {
-    final anonymised = await store.deletePlayer(player.id);
+    final deleted = await store.deletePlayer(player.id);
     log.info(
-      'player deleted id=${player.id} scores anonymised=$anonymised '
+      'player deleted id=${player.id} scores deleted=$deleted '
       'account=${player.accountProvider ?? "-"}',
     );
-    return anonymised;
+    return deleted;
   }
 }
 

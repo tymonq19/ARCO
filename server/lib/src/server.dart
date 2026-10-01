@@ -51,6 +51,7 @@ class ArcoServer {
     JwksFetcher? fetchSigningKeys,
     Uri? appleJwksUri,
     Uri? googleJwksUri,
+    Uri? firebaseJwksUri,
     Uri? revenueCatBaseUri,
     RevenueCatFetcher? fetchRevenueCat,
     JwksFetcher? fetchAdMobKeys,
@@ -77,6 +78,7 @@ class ArcoServer {
        _fetchSigningKeys = fetchSigningKeys,
        _appleJwksUri = appleJwksUri,
        _googleJwksUri = googleJwksUri,
+       _firebaseJwksUri = firebaseJwksUri,
        _revenueCatBaseUri = revenueCatBaseUri,
        _fetchRevenueCat = fetchRevenueCat,
        _fetchAdMobKeys = fetchAdMobKeys;
@@ -130,6 +132,7 @@ class ArcoServer {
   final JwksFetcher? _fetchSigningKeys;
   final Uri? _appleJwksUri;
   final Uri? _googleJwksUri;
+  final Uri? _firebaseJwksUri;
 
   /// TEST-ONLY HOOKS: where RevenueCat's REST API is (SPEC §4.9). The tests point
   /// these at a fake RevenueCat on loopback, so no test ever reaches the real
@@ -220,6 +223,7 @@ class ArcoServer {
         fetch: _fetchSigningKeys,
         appleJwksUri: _appleJwksUri,
         googleJwksUri: _googleJwksUri,
+        firebaseJwksUri: _firebaseJwksUri,
       ),
       log: log,
     );

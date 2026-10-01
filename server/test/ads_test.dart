@@ -787,6 +787,35 @@ void main() {
       );
     });
 
+    test('AdMob\'s "verify URL" check is answered and pays nobody', () async {
+      // The dashboard refuses to save a callback URL until a signed test call to
+      // it comes back 200 — and that call names no player at all.
+      final it = await boot();
+      final response = await getCallback(
+        it.server,
+        adCallbackQuery(key: it.key, playerId: it.playerId, customData: ''),
+      );
+      expect(response.statusCode, 200, reason: response.body);
+      expect(decode(response)['credited'], isFalse);
+      expect(await it.server.store.adRewardCount(), 0);
+      expect(await it.server.store.walletBalance(it.playerId), 0);
+    });
+
+    test('a forged call that names nobody is still refused', () async {
+      final it = await boot();
+      final response = await getCallback(
+        it.server,
+        adCallbackQuery(
+          key: it.key,
+          playerId: it.playerId,
+          customData: '',
+          signature:
+              'MEUCIQDforgedforgedforgedforgedforgedforgedforgedforgedfo',
+        ),
+      );
+      expect(response.statusCode, isNot(200));
+    });
+
     test('a placement this build has no name for still pays', () async {
       final it = await boot();
       final response = await getCallback(

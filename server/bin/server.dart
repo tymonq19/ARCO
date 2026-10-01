@@ -1,7 +1,8 @@
 /// Entry point. Environment: PORT (8080), DB_PATH (data/arco.db),
 /// VERIFY_REPLAYS (strict|off), LOG_LEVEL (debug|info|warn|error), HOST, and
-/// for Sign in with Apple / Google (SPEC §4.5) ACCOUNTS_ENABLED (on|off, default
-/// off), APPLE_CLIENT_IDS, GOOGLE_CLIENT_IDS.
+/// for signing in (SPEC §4.5) ACCOUNTS_ENABLED (on|off, default off),
+/// FIREBASE_PROJECT_ID, FIREBASE_SIGN_IN_METHODS, APPLE_CLIENT_IDS,
+/// GOOGLE_CLIENT_IDS.
 library;
 
 import 'dart:async';

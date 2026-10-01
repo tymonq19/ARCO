@@ -72,7 +72,9 @@ produces the same AOT executable inside a bundle directory.
 | `VERIFY_REPLAYS` | `strict` | `strict` re-simulates every submitted replay, `off` trusts the claimed score (**development only**) |
 | `LOG_LEVEL` | `info` | `debug` \| `info` \| `warn` \| `error` |
 | `HOST` | all interfaces | bind address, e.g. `127.0.0.1` |
-| `ACCOUNTS_ENABLED` | `off` | `on` turns on Sign in with Apple / Google (SPEC §4.5) |
+| `ACCOUNTS_ENABLED` | `off` | `on` turns on sign-in (SPEC §4.5) |
+| `FIREBASE_PROJECT_ID` | — | the Firebase project whose ID tokens are accepted (Apple, Google and e-mail sign-in); must be Arco's own project |
+| `FIREBASE_SIGN_IN_METHODS` | `apple,google,email` | which Firebase sign-in methods are accepted and advertised on `/api/health` |
 | `APPLE_CLIENT_IDS` | — | comma-separated `aud` values accepted from Apple: the app's bundle id, plus the Services ID if sign-in goes through the web flow |
 | `GOOGLE_CLIENT_IDS` | — | comma-separated `aud` values accepted from Google: the iOS / Android / web OAuth client ids the app asks tokens for |
 | `PURCHASES_ENABLED` | `off` | `on` turns on the one-time unlock through RevenueCat (SPEC §4.9) |
@@ -83,8 +85,8 @@ produces the same AOT executable inside a bundle directory.
 | `ADMOB_CALLBACK_KEY` | — | optional: a value that must appear as `?arco_key=…` on the SSV callback URL. **Secret**, and never the authentication — see below |
 | `ADMOB_SSV_KEYS_URL` | Google's | where AdMob's published verifier keys are fetched from; override for staging or a test fake |
 
-`ACCOUNTS_ENABLED=on` with **neither** client id list set is a startup error: with
-no `aud` to check against, a valid token minted for any other app would be
+`ACCOUNTS_ENABLED=on` with no `FIREBASE_PROJECT_ID` and **neither** client id list
+set is a startup error: with no `aud` to check against, a valid token minted for any other app would be
 accepted. Setting client ids while `ACCOUNTS_ENABLED` is not `on` starts normally
 and logs a warning, because that combination is nearly always a mistake. At most
 8 ids per provider, 255 characters each.
@@ -120,7 +122,7 @@ graceful shutdown (tick driver stopped, sockets closed, database closed).
 | `GET /api/players/me` | the caller's `{name,bestScore,rank,games,country,countryBestScore,countryRank,boards,createdAt}`, plus `{provider,linkedAt}` once an account is linked; `boards` is one entry per board actually played and the top-level standing is the one-ball board; `401` `missing_credentials` / `invalid_credentials` |
 | `POST /api/account/link` | sign in with Apple / Google → `200` with `{id,secret,outcome,boards,…}` — the same standing `GET /api/players/me` reports, because a merge changes it; `400` `invalid_json` / `invalid_provider`, `401` `invalid_credentials` / `invalid_token`, `409` `already_linked`, `413` over 8 KB, `429`, `503` `keys_unavailable`, `404` `accounts_disabled` |
 | `POST /api/account/unlink` | detaches the account, keeps the player and its runs → `200 {unlinked}` |
-| `DELETE /api/players/me` | deletes the caller's player, anonymises its runs → `200 {deleted,scoresAnonymised}` |
+| `DELETE /api/players/me` | deletes the caller's player and its runs → `200 {deleted,scoresDeleted}` |
 | `GET /api/shop/catalogue?v=N` | what can be owned, what it costs in Sparks, what the caller owns and wears, plus `premium` and the one-time unlock of SPEC §4.9 (`unlock: {productId,nameKey}` — absent when `PURCHASES_ENABLED` is off, and absent once the caller is premium) |
 | `GET /api/shop/inventory?v=N` | the caller's `{balance,earnedTotal,spentTotal,purchasedTotal,premium,adTotal,owned,equipped,earnedToday,dailyCap}`; `premium` is the one-time unlock (SPEC §4.9), and `owned` is then the whole catalogue |
 | `POST /api/shop/buy` | `{"itemId":"ball.comet"}` → `200` with `{priceTokens,charged,alreadyOwned,balance,premium,owned}`; a premium player is answered `alreadyOwned` with `charged: 0` rather than refused; `402` `insufficient_tokens`, `404` `unknown_item` |
@@ -189,12 +191,23 @@ moving a balance; version 7 renames the purchase ledger `spark_purchases` to
 bookworm, which the image is built on, ships 3.40; an older library is refused
 with that sentence rather than failing halfway.
 
-## Sign in with Apple and Google
+## Sign-in: Firebase (Apple, Google, e-mail), and direct Apple / Google
 
 Off unless `ACCOUNTS_ENABLED=on`. An account is what makes a player's scores
 survive a lost phone and follow them to a second device — offered *during* play,
-never as a gate on it. `GET /api/health` lists the providers this deployment
-accepts, so the client shows exactly the buttons that will work.
+never as a gate on it. `GET /api/health` lists the Firebase methods this
+deployment accepts under `firebase` (and the direct providers, which only builds
+up to 1.0.0+6 use, under `accounts`), so the client shows exactly the buttons
+that will work.
+
+The app signs in to Firebase and posts the Firebase ID token with
+`"provider":"firebase"`. The server checks it against the JWK form of Google's
+`securetoken` keys, with `aud` = `FIREBASE_PROJECT_ID` and `iss` =
+`https://securetoken.google.com/<project>`; the player's identity is the
+Firebase uid, and `firebase.sign_in_provider` (`apple.com`, `google.com`,
+`password`) is reported back as `method` but is not part of the identity.
+Anything else Firebase can mint — `anonymous` above all — is refused as
+`unsupported_method`.
 
 ```
 POST /api/account/link      {"provider":"apple","idToken":"<jwt>"}
@@ -268,10 +281,9 @@ digest.
   already-linked player is `409 {"error":"already_linked","provider":"apple"}`
   rather than silently detaching the first. Unlink, or use that sign-in.
 * **Deletion.** `DELETE /api/players/me` removes the player, its account, every
-  credential, its aliases and its ledger rows, and **anonymises** its score rows
-  (`player_id = NULL`) rather than deleting them: a verified run is a fact about
-  the leaderboard, and erasing rows would silently restate everyone else's rank.
-  What goes is every link between the person and those runs. Apple requires an
+  credential, its aliases, its ledger rows and **its score rows**: each run
+  carries the name it was played under, so leaving them would keep the nick on
+  the board after the person asked to be removed. Apple requires an
   app offering account creation to offer account deletion, so this route is never
   gated on `ACCOUNTS_ENABLED` and works for an anonymous player too.
 * **Unlink** detaches the account and keeps the player, its credentials and its

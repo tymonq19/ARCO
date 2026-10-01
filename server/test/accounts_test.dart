@@ -53,6 +53,7 @@ void main() {
     accountLimiter: accountLimiter,
     appleJwksUri: keyServer.uri,
     googleJwksUri: keyServer.uri,
+    firebaseJwksUri: keyServer.uri,
   );
 
   /// A distinct, valid Apple token. Distinct because two tokens with identical
@@ -71,6 +72,18 @@ void main() {
     key: providerKey,
     claims: googleClaims(
       subject: subject,
+      extra: {'nonce': 'n${tokenCounter++}'},
+    ),
+  );
+
+  String firebaseToken({
+    String subject = 'kXq3Firebase0Uid9xYz',
+    String signInProvider = 'password',
+  }) => signIdToken(
+    key: providerKey,
+    claims: firebaseClaims(
+      subject: subject,
+      signInProvider: signInProvider,
       extra: {'nonce': 'n${tokenCounter++}'},
     ),
   );
@@ -199,7 +212,7 @@ void main() {
           isA<FormatException>().having(
             (e) => e.message,
             'message',
-            contains('needs APPLE_CLIENT_IDS'),
+            contains('needs FIREBASE_PROJECT_ID'),
           ),
         ),
       );
@@ -222,10 +235,35 @@ void main() {
       expect(config.hasUnusedClientIds, isFalse);
     });
 
+    test('parses the Firebase project and its methods', () {
+      final env = {
+        'ACCOUNTS_ENABLED': 'on',
+        'FIREBASE_PROJECT_ID': firebaseProject,
+      };
+      final all = AccountsConfig.fromEnvironment((k) => env[k]);
+      expect(all.providers, ['firebase']);
+      expect(all.advertisedFirebaseMethods, ['apple', 'google', 'email']);
+
+      env['FIREBASE_SIGN_IN_METHODS'] = ' EMAIL, apple ';
+      final some = AccountsConfig.fromEnvironment((k) => env[k]);
+      expect(some.advertisedFirebaseMethods, ['apple', 'email']);
+    });
+
     test('rejects nonsense configuration instead of starting', () {
       for (final env in [
         {'ACCOUNTS_ENABLED': 'yes'},
         {'ACCOUNTS_ENABLED': 'on', 'APPLE_CLIENT_IDS': 'a b'},
+        {'ACCOUNTS_ENABLED': 'on', 'FIREBASE_PROJECT_ID': 'Arco Project'},
+        {
+          'ACCOUNTS_ENABLED': 'on',
+          'FIREBASE_PROJECT_ID': firebaseProject,
+          'FIREBASE_SIGN_IN_METHODS': 'email,anonymous',
+        },
+        {
+          'ACCOUNTS_ENABLED': 'on',
+          'FIREBASE_PROJECT_ID': firebaseProject,
+          'FIREBASE_SIGN_IN_METHODS': ' , ',
+        },
         {'ACCOUNTS_ENABLED': 'on', 'APPLE_CLIENT_IDS': 'a' * 300},
         {
           'ACCOUNTS_ENABLED': 'on',
@@ -944,7 +982,7 @@ void main() {
   });
 
   group('deleting the account', () {
-    test('removes the person and leaves the verified runs anonymous', () async {
+    test('removes the person and their runs from the board', () async {
       final server = await boot();
       final issued = await issuePlayer(server, name: 'Ada');
       await submit(server, authorization: authOf(issued), name: 'Ada');
@@ -956,12 +994,15 @@ void main() {
           authorization: authOf(issued),
         ),
       );
-      final boardBefore = await leaderboard(server);
+      expect(await leaderboard(server), hasLength(2));
 
       final r = await deleteMe(server, authOf(linked));
       expect(r.statusCode, 200, reason: r.body);
       expect(decode(r)['deleted'], isTrue);
-      expect(decode(r)['scoresAnonymised'], 1);
+      expect(decode(r)['scoresDeleted'], 1);
+      // What builds up to 1.0.0+6 read; zero keeps them from claiming the runs
+      // stayed on the board.
+      expect(decode(r)['scoresAnonymised'], 0);
 
       // The player, its account and every credential are gone.
       expect(await server.store.playerCount(), 0);
@@ -972,15 +1013,10 @@ void main() {
         expect((await getMe(server, auth)).statusCode, 401, reason: auth);
       }
 
-      // The runs stay on the board, unowned: deleting them would restate
-      // everyone else's rank.
+      // The runs are gone with the name on them; everybody else's stay.
       final boardAfter = await leaderboard(server);
-      expect(boardAfter, hasLength(boardBefore.length));
-      expect(boardAfter.every((e) => !e.containsKey('playerId')), isTrue);
-      expect(
-        boardAfter.map((e) => e['score']),
-        boardBefore.map((e) => e['score']),
-      );
+      expect(boardAfter.map((e) => e['name']), ['Somebody']);
+      expect(boardAfter.single['rank'], 1);
 
       // And signing in with the same provider again is a clean slate.
       final after = decode(
@@ -1003,7 +1039,8 @@ void main() {
           200,
           reason: 'Apple requires deletion; it is never switchable off',
         );
-        expect(decode(r)['scoresAnonymised'], 1);
+        expect(decode(r)['scoresDeleted'], 1);
+        expect(await leaderboard(server), isEmpty);
         expect(await server.store.playerCount(), 0);
       },
     );
@@ -1167,5 +1204,74 @@ void main() {
         expect((await getMe(server, authOf(local))).statusCode, 401);
       },
     );
+  });
+
+  group('signing in through Firebase', () {
+    const firebaseOnly = AccountsConfig(
+      enabled: true,
+      firebaseProjectId: firebaseProject,
+    );
+
+    test('health advertises its methods, apart from the direct list', () async {
+      final server = await boot(accounts: firebaseOnly);
+      final health = decode(
+        await http.get(Uri.parse('${server.baseUrl}/api/health')),
+      );
+      // Builds up to 1.0.0+6 read `accounts`; they must not see Firebase there.
+      expect(health['accounts'], isEmpty);
+      expect(health['firebase'], ['apple', 'google', 'email']);
+    });
+
+    test('one uid is one account, whichever way it signs in', () async {
+      final server = await boot(accounts: firebaseOnly);
+      final issued = await issuePlayer(server, name: 'Ada');
+      await submit(server, authorization: authOf(issued), name: 'Ada');
+
+      final first = await link(
+        server,
+        provider: firebaseProviderName,
+        idToken: firebaseToken(subject: 'uid.one', signInProvider: 'password'),
+        authorization: authOf(issued),
+      );
+      expect(first.statusCode, 200, reason: first.body);
+      expect(decode(first)['provider'], firebaseProviderName);
+      expect(decode(first)['method'], 'email');
+      expect(decode(first)['outcome'], 'linked');
+
+      // A second phone, the same Firebase user signing in with Apple this time.
+      final second = await link(
+        server,
+        provider: firebaseProviderName,
+        idToken: firebaseToken(subject: 'uid.one', signInProvider: 'apple.com'),
+      );
+      expect(second.statusCode, 200, reason: second.body);
+      expect(decode(second)['outcome'], 'restored');
+      expect(decode(second)['method'], 'apple');
+      expect(decode(second)['id'], decode(first)['id']);
+      expect(decode(second)['games'], 1);
+    });
+
+    test('an anonymous Firebase user gets no account', () async {
+      final server = await boot(accounts: firebaseOnly);
+      final r = await link(
+        server,
+        provider: firebaseProviderName,
+        idToken: firebaseToken(signInProvider: 'anonymous'),
+      );
+      expect(r.statusCode, 401);
+      expect(decode(r)['reason'], 'unsupported_method');
+      expect(await server.store.playerCount(), 0);
+    });
+
+    test('a raw Apple token is not a Firebase token', () async {
+      final server = await boot(accounts: firebaseOnly);
+      final r = await link(
+        server,
+        provider: firebaseProviderName,
+        idToken: appleToken(),
+      );
+      expect(r.statusCode, 401);
+      expect(decode(r)['reason'], 'wrong_issuer');
+    });
   });
 }

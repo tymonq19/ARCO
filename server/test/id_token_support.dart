@@ -227,6 +227,46 @@ Map<String, dynamic> googleClaims({
   },
 );
 
+/// The Firebase project the tests configure the server with.
+const String firebaseProject = 'arco-test-1234';
+const String firebaseIssuer = 'https://securetoken.google.com/$firebaseProject';
+
+/// Claims of a well-formed Firebase ID token for this project. [signInProvider]
+/// is Firebase's own id for how the user signed in: `apple.com`, `google.com`,
+/// `password`, `anonymous`…
+Map<String, dynamic> firebaseClaims({
+  String subject = 'kXq3Firebase0Uid9xYz',
+  String signInProvider = 'password',
+  String audience = firebaseProject,
+  String issuer = firebaseIssuer,
+  DateTime? now,
+  Duration life = const Duration(hours: 1),
+  Duration authTimeIn = const Duration(minutes: -1),
+  Map<String, dynamic> extra = const {},
+}) {
+  final issued = (now ?? DateTime.now()).toUtc();
+  return appleClaims(
+    subject: subject,
+    audience: audience,
+    issuer: issuer,
+    now: issued,
+    life: life,
+    extra: {
+      'auth_time': _epoch(issued.add(authTimeIn)),
+      'user_id': subject,
+      'email': 'ada@example.com',
+      'email_verified': false,
+      'firebase': {
+        'identities': {
+          'email': ['ada@example.com'],
+        },
+        'sign_in_provider': signInProvider,
+      },
+      ...extra,
+    },
+  );
+}
+
 /// An HTTP server on loopback that serves a JWKS document, standing in for
 /// `https://appleid.apple.com/auth/keys`.
 ///
