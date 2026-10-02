@@ -7,6 +7,7 @@ import '../app/settings.dart';
 import '../app/strings.dart';
 import '../services/audio_service.dart';
 import '../services/player_identity.dart';
+import '../services/purchase_service.dart';
 import '../services/shop_service.dart';
 import 'duel_lobby_screen.dart';
 import 'leaderboard_screen.dart';
@@ -216,6 +217,19 @@ class _HomeScreenState extends State<HomeScreen> {
                       filled: false,
                       onPressed: () => _go(SettingsScreen.route),
                     ),
+                    // The way to the unlock (SPEC 4.9), for a player who does
+                    // not own it in a deployment that sells it. It opens the
+                    // shop, where the unlock leads; once bought, it is gone.
+                    if (context.watch<PurchaseService>().offered &&
+                        !context.watch<ShopService>().premium) ...[
+                      const SizedBox(height: 12),
+                      NeonButton(
+                        label: s.t('home.unlock'),
+                        icon: Icons.workspace_premium,
+                        color: theme.star,
+                        onPressed: () => _go(ShopScreen.route),
+                      ),
+                    ],
                     const SizedBox(height: 20),
                     // The wallet and the way into the shop (SPEC 4.8), as one
                     // quiet row rather than a fifth button: the balance is

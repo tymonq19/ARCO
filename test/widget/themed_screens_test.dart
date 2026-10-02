@@ -410,10 +410,9 @@ void main() {
       final scrollable = tester.firstState<ScrollableState>(
         find.byType(Scrollable),
       );
-      for (var i = 0; i < 14; i++) {
-        scrollable.position.jumpTo(scrollable.position.maxScrollExtent);
-        await tester.pump();
-      }
+      // The unlock leads the shop, so the card is at the top.
+      scrollable.position.jumpTo(0);
+      await tester.pump();
 
       final s = Strings.read(tester.element(find.byType(ShopScreen)));
       expect(find.byType(UnlockSection), findsOneWidget);

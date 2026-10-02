@@ -299,4 +299,51 @@ void main() {
     expect(env.api.profileCalls, 0);
     expect(env.api.createPlayerCalls, 0);
   });
+
+  // SPEC 4.9: the way to the unlock is on the menu for a player who does not
+  // own it, and gone once they do.
+  testWidgets('FULL ACCESS is on the menu until it is bought', (tester) async {
+    useTallPhone(tester);
+    final env = await createTestEnv(
+      sellsUnlock: true,
+      secrets: FakeSecretStore.withCredentials(testCredentials(1)),
+    );
+    await tester.pumpWidget(
+      wrapApp(
+        env,
+        const HomeScreen(),
+        routes: {ShopScreen.route: (_) => const ShopScreen()},
+      ),
+    );
+    // The menu learns the shop sells the unlock from the catalogue it asks for.
+    for (var i = 0; i < 25; i++) {
+      await tester.pump(const Duration(milliseconds: 16));
+    }
+    expect(find.text('FULL ACCESS'), findsOneWidget);
+
+    await tester.tap(find.text('FULL ACCESS'));
+    for (var i = 0; i < 25; i++) {
+      await tester.pump(const Duration(milliseconds: 16));
+    }
+    expect(find.byType(ShopScreen), findsOneWidget);
+    await tester.pumpWidget(const SizedBox());
+  });
+
+  testWidgets('a player with the unlock is not sold it again', (tester) async {
+    useTallPhone(tester);
+    final env = await createTestEnv(premium: true);
+    await tester.pumpWidget(wrapApp(env, const HomeScreen()));
+    await tester.pump();
+    expect(find.text('FULL ACCESS'), findsNothing);
+  });
+
+  testWidgets('a deployment that sells nothing shows no such button', (
+    tester,
+  ) async {
+    useTallPhone(tester);
+    final env = await createTestEnv();
+    await tester.pumpWidget(wrapApp(env, const HomeScreen()));
+    await tester.pump();
+    expect(find.text('FULL ACCESS'), findsNothing);
+  });
 }

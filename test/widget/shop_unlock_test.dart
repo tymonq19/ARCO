@@ -110,7 +110,9 @@ void main() {
 
       // The widget is in the tree (the screen always builds it) and renders
       // nothing: no heading, no restore button, no apology.
-      expect(find.byType(UnlockSection), findsOneWidget);
+      // Zero-sized at the very top of the list, so the finder has to be told
+      // that is not "off screen".
+      expect(find.byType(UnlockSection, skipOffstage: false), findsOneWidget);
       expect(headingText(en.t('shop.unlockTitle')), findsNothing);
       expect(find.text(en.t('shop.restore')), findsNothing);
       expect(find.text(en.t('shop.unlockFree')), findsNothing);
@@ -204,22 +206,37 @@ void main() {
   });
 
   group('the shop does not nag', () {
-    testWidgets('the unlock sits below the earning panel', (tester) async {
+    testWidgets('the unlock leads the shop until it is bought', (tester) async {
       useLargeViewport(tester);
       final env = await unlockEnv();
       await openShop(tester, env);
-      await scrollTo(tester, headingText(en.t('shop.unlockTitle')));
-
-      final earning = tester.getTopLeft(find.text(en.t('shop.earnHint'))).dy;
       final unlock = tester
           .getTopLeft(headingText(en.t('shop.unlockTitle')))
           .dy;
+      final firstSection = tester
+          .getTopLeft(headingText(en.t('shop.section.theme')))
+          .dy;
       expect(
         unlock,
-        greaterThan(earning),
-        reason:
-            'the order is the argument: everything here is earnable by play',
+        lessThan(firstSection),
+        reason: 'the one thing that covers everything below it comes first',
       );
+    });
+
+    testWidgets('once bought, the confirmation moves to the bottom', (
+      tester,
+    ) async {
+      useLargeViewport(tester);
+      final env = await unlockEnv(premium: true);
+      await openShop(tester, env);
+      await scrollTo(tester, headingText(en.t('shop.unlockedTitle')));
+      final owned = tester
+          .getTopLeft(headingText(en.t('shop.unlockedTitle')))
+          .dy;
+      final firstSection = tester
+          .getTopLeft(headingText(en.t('shop.section.theme')))
+          .dy;
+      expect(owned, greaterThan(firstSection));
     });
 
     testWidgets('it says once that nothing is behind a payment', (

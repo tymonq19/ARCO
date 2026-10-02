@@ -186,23 +186,21 @@ void main() {
       expect(find.text(en.t('ads.watch')), findsOneWidget);
     });
 
-    testWidgets('sits between the earning panel and the unlock', (
-      tester,
-    ) async {
-      // The order is the argument twice over: sparks come from playing; an ad costs
-      // attention; the unlock costs money.
+    testWidgets('sits right under the earning panel', (tester) async {
+      // Sparks come from playing; an ad is the other way to them, for half a
+      // minute of attention. The unlock leads the shop, above both.
       useLargeViewport(tester);
       final env = await adEnv(sellsUnlock: true);
       await openShop(tester, env);
-      await scrollTo(tester, headingText(en.t('shop.unlockTitle')));
-
-      final earning = tester.getTopLeft(find.text(en.t('shop.earnHint'))).dy;
-      final ad = tester.getTopLeft(headingText(en.t('ads.title'))).dy;
       final unlock = tester
           .getTopLeft(headingText(en.t('shop.unlockTitle')))
           .dy;
+      await scrollTo(tester, headingText(en.t('ads.title')));
+
+      final earning = tester.getTopLeft(find.text(en.t('shop.earnHint'))).dy;
+      final ad = tester.getTopLeft(headingText(en.t('ads.title'))).dy;
       expect(ad, greaterThan(earning));
-      expect(unlock, greaterThan(ad));
+      expect(unlock, lessThan(earning));
     });
 
     testWidgets('a tap shows the ad, attributed to this player', (

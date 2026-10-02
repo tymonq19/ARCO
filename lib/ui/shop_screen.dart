@@ -368,6 +368,12 @@ class _ShopScreenState extends State<ShopScreen> with WidgetsBindingObserver {
       return [const SizedBox(height: 24), _unreachable(s, theme, shop)];
     }
     final cardWidth = _cardWidth(available);
+    // The unlock leads the shop for anyone who does not own it: it is the one
+    // thing here that covers everything below it, so it is the first thing read.
+    // Once bought it moves to the bottom as a quiet confirmation, where the
+    // cosmetics — now all theirs — lead instead. Renders nothing at all when
+    // this deployment takes no money or this build has no store keys.
+    final unlock = UnlockSection(onBuy: _buyUnlock, onRestore: _restore);
     return [
       // The catalogue on screen is the last one the server sent. When the newest
       // attempt failed, that is worth a line — the prices are still real, but
@@ -376,6 +382,7 @@ class _ShopScreenState extends State<ShopScreen> with WidgetsBindingObserver {
         const SizedBox(height: 8),
         _staleNotice(s, theme, shop),
       ],
+      if (!shop.premium) ...[unlock, const SizedBox(height: 18)],
       for (final slot in snapshot.slots) ...[
         SectionLabel(s.t('shop.section.$slot')),
         _grid(s, snapshot, slot, cardWidth),
@@ -386,18 +393,12 @@ class _ShopScreenState extends State<ShopScreen> with WidgetsBindingObserver {
       // towards items they already own is a bar measuring nothing (SPEC §4.9).
       // The wallet itself is untouched: the server keeps crediting every run.
       if (snapshot.showsBalance) _earning(s, theme, snapshot),
-      // Directly under the earning panel, above the unlock. The order is the
-      // argument twice over: Sparks come from playing; an ad costs half a minute of
-      // attention; the unlock costs money. Renders nothing at all when this
-      // deployment credits no ads, this build has no AdMob unit, no ad is in hand,
-      // or the player bought the unlock — which buys no ads (SPEC §4.10).
+      // Directly under the earning panel: the other way to Sparks, for half a
+      // minute of attention. Renders nothing at all when this deployment credits
+      // no ads, this build has no AdMob unit, no ad is in hand, or the player
+      // bought the unlock — which buys no ads (SPEC §4.10).
       SparkAdSection(onWatch: _watchAd),
-      // Below the earning panel, always. The order is the argument: everything the
-      // unlock covers is earnable by playing, and the unlock is the shortcut for
-      // anyone who would rather not wait (SPEC §4.9). Renders nothing at all when
-      // this deployment takes no money or this build has no store keys — and
-      // becomes a quiet confirmation once it is owned.
-      UnlockSection(onBuy: _buyUnlock, onRestore: _restore),
+      if (shop.premium) unlock,
       if (_missingContent(snapshot) > 0) ...[
         const SizedBox(height: 12),
         Text(

@@ -150,6 +150,7 @@ class Strings {
     'home.nickname': 'Nickname',
     'home.nicknameHint': '2–12 characters: letters, digits, space, _ or -',
     'home.solo': 'SOLO',
+    'home.unlock': 'FULL ACCESS',
     'home.duel': 'DUEL',
     'home.leaderboard': 'LEADERBOARD',
     'home.settings': 'SETTINGS',
@@ -373,7 +374,7 @@ class Strings {
     // than, and no price in this table — the price is the store's, printed
     // verbatim from whatever StoreKit or Google Play hands the app.
     'unlock.full': 'Unlock everything',
-    'shop.unlockTitle': 'One-time unlock',
+    'shop.unlockTitle': 'Full access',
     'shop.unlockPerk.now': 'Every look, ball and paddle in the shop.',
     'shop.unlockPerk.later': 'And every one added later, at no extra cost.',
     'shop.unlockPerk.ads': 'No ads, ever.',
@@ -588,6 +589,7 @@ class Strings {
     'home.nickname': 'Pseudonim',
     'home.nicknameHint': '2–12 znaków: litery, cyfry, spacja, _ lub -',
     'home.solo': 'ZAGRAJ SOLO',
+    'home.unlock': 'PEŁNY DOSTĘP',
     'home.duel': 'POJEDYNEK',
     'home.leaderboard': 'TABLICA WYNIKÓW',
     'home.settings': 'USTAWIENIA',
@@ -791,7 +793,7 @@ class Strings {
     // Jednorazowe odblokowanie (SPEC §4.9): jeden zakup, bez ceny w tej tabeli —
     // cenę podaje sklep urządzenia i wyświetlamy ją dosłownie.
     'unlock.full': 'Odblokuj wszystko',
-    'shop.unlockTitle': 'Jednorazowy zakup',
+    'shop.unlockTitle': 'Pełny dostęp',
     'shop.unlockPerk.now': 'Wszystkie motywy, piłki i paletki ze sklepu.',
     'shop.unlockPerk.later': 'I każde dodane później, bez dopłat.',
     'shop.unlockPerk.ads': 'Żadnych reklam, nigdy.',
