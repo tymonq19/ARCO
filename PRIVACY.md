@@ -1,6 +1,6 @@
 # Polityka prywatności gry Arco
 
-*Ostatnia aktualizacja: 1 października 2026 r.* · [English version below](#privacy-policy-for-arco)
+*Ostatnia aktualizacja: 2 października 2026 r.* · [English version below](#privacy-policy-for-arco)
 
 Ta polityka wyjaśnia, jakie dane przetwarza gra **Arco** (aplikacja na iOS i Androida oraz jej serwer), po co,
 jak długo i jakie masz prawa. Piszemy ją prosto, bo zbieramy mało: tyle, ile potrzeba, żeby działała tablica
@@ -43,7 +43,7 @@ znika po zakończeniu meczu; nic z niego nie jest zapisywane.
 Konto możesz założyć przez **Apple**, **Google** albo **adres e-mail i hasło**. Logowanie obsługuje **Firebase
 Authentication** (Google). Firebase przetwarza: przy e-mailu — adres e-mail i hasło (przechowywane w postaci
 zabezpieczonej), przy Apple/Google — identyfikator konta u tego dostawcy, a także adres e-mail, jeśli dostawca
-go przekaże. **Nasz serwer nie zapisuje adresu e-mail ani imienia** — przechowuje wyłącznie identyfikator
+go przekaże; przy Google także imię i zdjęcie profilowe z konta Google (gra ich nie wyświetla ani nie używa). **Nasz serwer nie zapisuje adresu e-mail ani imienia** — przechowuje wyłącznie identyfikator
 użytkownika Firebase i datę powiązania konta, żeby Twoje wyniki i zakupy były dostępne na innym urządzeniu.
 
 ### 3.6 Iskry i ozdoby
@@ -124,7 +124,7 @@ górze.
 
 # Privacy Policy for Arco
 
-*Last updated: 1 October 2026*
+*Last updated: 2 October 2026*
 
 This policy explains what data **Arco** (the iOS and Android game and its server) processes, why, for how long,
 and what your rights are. We keep it short because we collect little: what the leaderboard, accounts, purchases
@@ -167,7 +167,8 @@ memory and disappears when the match ends; nothing from it is stored.
 You can create an account with **Apple**, **Google** or an **e-mail address and password**. Sign-in is handled by
 **Firebase Authentication** (Google). Firebase processes: for e-mail, the address and the password (stored in a
 protected form); for Apple/Google, the account identifier at that provider and the e-mail address if the
-provider shares it. **Our server stores no e-mail address and no name** — only the Firebase user id and the date
+provider shares it; for Google, also the name and profile photo of the Google account (the game neither shows
+nor uses them). **Our server stores no e-mail address and no name** — only the Firebase user id and the date
 the account was linked, so your scores and purchases follow you to another device.
 
 ### 3.6 Sparks and cosmetics
