@@ -824,6 +824,14 @@ provider API calls after sign-in — the identity token is used once to establis
 player's own credential (§4.4) carries every later request.
 
 ### 4.6 Boards and the national leaderboard
+
+**Who is on the public board.** While the deployment offers sign-in (§4.5), the public board — `GET
+/api/leaderboard`, every rank, globally and per country — counts only runs whose player has an account. Every run
+is still submitted, verified, stored and paid in Sparks; a run by a player without an account simply has no
+position yet: `POST /api/scores` answers `"listed": false` with `"rank": 0` and no `countryRank`, and `GET
+/api/players/me` reports `games` and `bestScore` with `rank: null`. Signing in puts every run that player already
+has on the board at once — nothing is re-submitted. With sign-in switched off, everyone is listed, so a deployment
+nobody can sign in to does not have an empty board.
 Two filters over the same `scores` rows, for two different reasons. Nothing is stored twice and nothing is
 re-ranked; a board is always a slice.
 

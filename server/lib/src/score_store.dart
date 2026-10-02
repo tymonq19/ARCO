@@ -169,9 +169,13 @@ class ScoreStore {
   ///
   /// [busyTimeout] is forwarded to `PRAGMA busy_timeout`; the default matches
   /// [Db.open]. Tests lower it to keep a lock-contention case short.
+  ///
+  /// [listedOnly] keeps runs off the public board unless their player has an
+  /// account (SPEC §4.6) — see [Db.listedOnly].
   static Future<ScoreStore> open(
     String path, {
     Duration busyTimeout = Db.defaultBusyTimeout,
+    bool listedOnly = false,
   }) async {
     final replies = ReceivePort();
     final exited = Completer<void>();
@@ -221,7 +225,12 @@ class ScoreStore {
 
     final isolate = await Isolate.spawn(
       _dbWorker,
-      <Object?>[replies.sendPort, path, busyTimeout.inMilliseconds],
+      <Object?>[
+        replies.sendPort,
+        path,
+        busyTimeout.inMilliseconds,
+        listedOnly,
+      ],
       onError: replies.sendPort,
       onExit: replies.sendPort,
       debugName: 'arco_db',
@@ -234,8 +243,12 @@ class ScoreStore {
       replies.close();
       rethrow;
     }
-    return ScoreStore._(isolate, commands, replies, exited, pending);
+    return ScoreStore._(isolate, commands, replies, exited, pending)
+      ..listedOnly = listedOnly;
   }
+
+  /// Whether the public board shows only runs whose player has an account.
+  bool listedOnly = false;
 
   final Isolate _isolate;
   final SendPort _commands;
@@ -688,10 +701,15 @@ Future<void> _dbWorker(List<Object?> init) async {
   final replies = init[0] as SendPort;
   final path = init[1] as String;
   final busyTimeoutMs = init[2] as int;
+  final listedOnly = init[3] as bool;
 
   final Db db;
   try {
-    db = Db.open(path, busyTimeout: Duration(milliseconds: busyTimeoutMs));
+    db = Db.open(
+      path,
+      busyTimeout: Duration(milliseconds: busyTimeoutMs),
+      listedOnly: listedOnly,
+    );
   } catch (e) {
     replies.send(_DbReply(ScoreStore._bootstrapId, null, '$e'));
     return;

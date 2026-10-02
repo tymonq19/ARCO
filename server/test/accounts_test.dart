@@ -986,7 +986,15 @@ void main() {
       final server = await boot();
       final issued = await issuePlayer(server, name: 'Ada');
       await submit(server, authorization: authOf(issued), name: 'Ada');
-      await seedScore(server, 'other-player', 5000, name: 'Somebody');
+      // Somebody else with an account, so their run is on the public board.
+      final other = await issuePlayer(server, name: 'Somebody');
+      await submit(server, authorization: authOf(other), name: 'Somebody');
+      await link(
+        server,
+        idToken: googleToken(subject: 'stays'),
+        provider: googleProviderName,
+        authorization: authOf(other),
+      );
       final linked = decode(
         await link(
           server,
@@ -1004,11 +1012,11 @@ void main() {
       // stayed on the board.
       expect(decode(r)['scoresAnonymised'], 0);
 
-      // The player, its account and every credential are gone.
-      expect(await server.store.playerCount(), 0);
+      // The player, its account and every credential are gone; the other
+      // player is untouched.
+      expect(await server.store.playerCount(), 1);
       expect(await server.store.playerById(linked['id'] as String), isNull);
       expect(await server.store.playerByAccount('apple', 'to.delete'), isNull);
-      expect(await server.store.tokenUseCount(), 0);
       for (final auth in [authOf(linked), authOf(issued)]) {
         expect((await getMe(server, auth)).statusCode, 401, reason: auth);
       }
@@ -1272,6 +1280,61 @@ void main() {
       );
       expect(r.statusCode, 401);
       expect(decode(r)['reason'], 'wrong_issuer');
+    });
+  });
+
+  group('the public board is the players with an account', () {
+    test('a run without one is kept and paid, but not listed', () async {
+      final server = await boot();
+      final issued = await issuePlayer(server, name: 'Ada');
+      final r = await submit(
+        server,
+        authorization: authOf(issued),
+        name: 'Ada',
+      );
+      expect(r.statusCode, 201, reason: r.body);
+      expect(decode(r)['listed'], isFalse);
+      expect(decode(r)['rank'], 0);
+      expect(decode(r)['countryRank'], isNull);
+      // Stored, and its owner's standing counts it — without a position.
+      expect(await server.store.count(), 1);
+      final me = decode(await getMe(server, authOf(issued)));
+      expect(me['games'], 1);
+      expect(me['rank'], isNull);
+      expect(await leaderboard(server), isEmpty);
+    });
+
+    test('signing in puts the runs already played on the board', () async {
+      final server = await boot();
+      final issued = await issuePlayer(server, name: 'Ada');
+      await submit(server, authorization: authOf(issued), name: 'Ada');
+      final linked = decode(
+        await link(
+          server,
+          idToken: appleToken(subject: 'now.listed'),
+          authorization: authOf(issued),
+        ),
+      );
+      expect(linked['rank'], 1);
+      final board = await leaderboard(server);
+      expect(board.map((e) => e['name']), ['Ada']);
+
+      final next = await submit(server, authorization: authOf(linked));
+      expect(decode(next)['listed'], isTrue);
+      expect(decode(next)['rank'], greaterThan(0));
+    });
+
+    test('with sign-in switched off, everyone is on the board', () async {
+      final server = await boot(accounts: const AccountsConfig());
+      final issued = await issuePlayer(server, name: 'Ada');
+      final r = await submit(
+        server,
+        authorization: authOf(issued),
+        name: 'Ada',
+      );
+      expect(decode(r)['listed'], isTrue);
+      expect(decode(r)['rank'], 1);
+      expect(await leaderboard(server), hasLength(1));
     });
   });
 }

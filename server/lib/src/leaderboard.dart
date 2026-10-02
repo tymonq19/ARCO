@@ -76,6 +76,9 @@ class SubmitResult {
     'id': id,
     'score': score,
     'rank': rank,
+    // Whether the run is on the public board: false for a player without an
+    // account while sign-in is on offer (SPEC §4.6), and then `rank` is 0.
+    'listed': rank > 0,
     // Which board the run was filed on and the rank is measured against
     // (SPEC §4.6). It is not echoed from the request — there is no such
     // parameter — but taken from the replay the server verified, so a client
@@ -570,11 +573,20 @@ class LeaderboardService {
     // Both ranks are positions on the board this run was actually played on
     // (SPEC §4.6): counting a two-ball run against one-ball runs would be a
     // position in a race nobody ran.
-    final rank = await store.rank(checked.score, balls: checked.balls);
+    // A run by a player without an account is stored, verified and paid but
+    // not on the public board yet (SPEC §4.6), so it has no position there:
+    // rank 0, which every client already reads as "no rank to show".
+    final listed =
+        !store.listedOnly ||
+        (playerId != null &&
+            (await store.playerById(playerId))?.accountProvider != null);
+    final rank = listed
+        ? await store.rank(checked.score, balls: checked.balls)
+        : 0;
     // The point of the national board: this number is reachable, and the client
     // can show it the moment the run is stored instead of making the player go
     // looking for it.
-    final countryRank = checked.country == null
+    final countryRank = checked.country == null || !listed
         ? null
         : await store.rank(
             checked.score,

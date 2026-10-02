@@ -1111,7 +1111,14 @@ class AdRewardState {
 }
 
 class Db {
-  Db._(this._db)
+  /// The SQL that keeps a run off the public board unless its player has an
+  /// account (SPEC §4.6) — empty when [listedOnly] is off.
+  static String _listed(bool listedOnly) => listedOnly
+      ? ' AND player_id IN '
+            '(SELECT id FROM players WHERE account_subject IS NOT NULL)'
+      : '';
+
+  Db._(this._db, {this.listedOnly = false})
     : _insert = _db.prepare(
         'INSERT INTO scores '
         '(id, name, score, ticks, seed, created_at, ip_hash, hash, player_id, '
@@ -1126,23 +1133,29 @@ class Db {
       _top = _db.prepare(
         'SELECT id, name, score, ticks, seed, created_at, ip_hash, hash, '
         'player_id, country, balls FROM scores '
-        'WHERE balls = ? AND created_at >= ? '
+        'WHERE balls = ? AND created_at >= ?${_listed(listedOnly)} '
         'ORDER BY score DESC, created_at ASC LIMIT ?',
       ),
       // The national board (SPEC §4.6), inside one ball count.
       _topInCountry = _db.prepare(
         'SELECT id, name, score, ticks, seed, created_at, ip_hash, hash, '
         'player_id, country, balls FROM scores '
-        'WHERE balls = ? AND country = ? AND created_at >= ? '
+        'WHERE balls = ? AND country = ? AND created_at >= ?'
+        '${_listed(listedOnly)} '
         'ORDER BY score DESC, created_at ASC LIMIT ?',
       ),
       _rank = _db.prepare(
         'SELECT COUNT(*) AS c FROM scores '
-        'WHERE balls = ? AND score > ? AND created_at >= ?',
+        'WHERE balls = ? AND score > ? AND created_at >= ?'
+        '${_listed(listedOnly)}',
       ),
       _rankInCountry = _db.prepare(
         'SELECT COUNT(*) AS c FROM scores '
-        'WHERE balls = ? AND country = ? AND score > ? AND created_at >= ?',
+        'WHERE balls = ? AND country = ? AND score > ? AND created_at >= ?'
+        '${_listed(listedOnly)}',
+      ),
+      _isListed = _db.prepare(
+        'SELECT 1 FROM players WHERE id = ? AND account_subject IS NOT NULL',
       ),
       _count = _db.prepare('SELECT COUNT(*) AS c FROM scores'),
       _countOnBoard = _db.prepare(
@@ -1529,7 +1542,11 @@ class Db {
 
   /// Opens (creating if needed) the database at [path]. `:memory:` opens an
   /// in-memory database (tests). Parent directories are created.
-  factory Db.open(String path, {Duration busyTimeout = defaultBusyTimeout}) {
+  factory Db.open(
+    String path, {
+    Duration busyTimeout = defaultBusyTimeout,
+    bool listedOnly = false,
+  }) {
     final Database db;
     if (path == ':memory:') {
       db = sqlite3.openInMemory();
@@ -1547,7 +1564,7 @@ class Db {
       db.close();
       rethrow;
     }
-    return Db._(db);
+    return Db._(db, listedOnly: listedOnly);
   }
 
   /// Schema version stored in SQLite's `user_version`.
@@ -2112,6 +2129,16 @@ class Db {
   final PreparedStatement _moveSecrets;
   final PreparedStatement _moveTokenUses;
   final PreparedStatement _deleteScoresOf;
+  final PreparedStatement _isListed;
+
+  /// Whether the public board shows only runs whose player has an account
+  /// (SPEC §4.6). On whenever the deployment offers sign-in; off otherwise, so
+  /// a deployment nobody can sign in to does not have an empty board.
+  final bool listedOnly;
+
+  /// Whether [playerId]'s runs appear on the public board.
+  bool isListed(String playerId) =>
+      !listedOnly || _isListed.select([playerId]).isNotEmpty;
   final PreparedStatement _newestScoreName;
   final PreparedStatement _setPlayerFacts;
   final PreparedStatement _deletePlayer;
@@ -2358,6 +2385,9 @@ class Db {
   /// "you are last on a board you never played" row.
   List<PlayerStats> playerBoards(String playerId) {
     final country = playerCountry(playerId);
+    // A player who is not on the public board has no position on it: the runs
+    // and the best still count, the rank is simply not theirs yet.
+    final listed = isListed(playerId);
     final out = <PlayerStats>[];
     for (final row in _playerBoards.select([playerId])) {
       final games = row['c'] as int;
@@ -2374,7 +2404,9 @@ class Db {
         ]).first;
         if ((national['c'] as int) > 0) {
           countryBest = national['best'] as int;
-          countryRank = rank(countryBest, country: country, balls: balls);
+          countryRank = listed
+              ? rank(countryBest, country: country, balls: balls)
+              : null;
         }
       }
       out.add(
@@ -2382,7 +2414,7 @@ class Db {
           games: games,
           balls: balls,
           bestScore: best,
-          rank: rank(best, balls: balls),
+          rank: listed ? rank(best, balls: balls) : null,
           country: country,
           countryBestScore: countryBest,
           countryRank: countryRank,

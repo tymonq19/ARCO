@@ -224,7 +224,9 @@ class _SoloScreenState extends State<SoloScreen> with WidgetsBindingObserver {
     SubmitAccepted(rank: final rank) when rank > 0 => s.f('solo.rank', {
       'rank': rank,
     }),
-    SubmitAccepted() => s.t('common.ok'),
+    // Stored and paid, but not on the public board: the player has no account
+    // while sign-in is on offer (SPEC §4.6). The line under it is the way on.
+    SubmitAccepted() => s.t('solo.notListed'),
     SubmitDeferred() => s.t('solo.savedLocally'),
     SubmitRejected(error: final code) => s.submitError(code),
     null => s.t('solo.savedLocally'),

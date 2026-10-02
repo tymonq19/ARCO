@@ -191,7 +191,12 @@ class ArcoServer {
     final bindTo = _address ?? await _resolveHost(config.host);
     // Storage lives on its own isolate: a query or a blocked write must never
     // stop this isolate from ticking rooms and answering requests.
-    final store = await ScoreStore.open(config.dbPath);
+    // With sign-in on offer, the public board is the players who have an
+    // account (SPEC §4.6); every run is still stored, verified and paid.
+    final store = await ScoreStore.open(
+      config.dbPath,
+      listedOnly: config.accounts.providers.isNotEmpty,
+    );
     _store = store;
     final rooms = RoomRegistry(
       log: log,

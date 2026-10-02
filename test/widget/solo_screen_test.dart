@@ -331,4 +331,35 @@ void main() {
 
     await tester.pumpWidget(const SizedBox());
   });
+
+  // SPEC 4.6: with sign-in on offer, the public board is the players with an
+  // account. A run without one is stored and paid, and the score screen says
+  // what is missing instead of a bare "OK".
+  testWidgets('a run with no account says how to reach the board', (
+    tester,
+  ) async {
+    useTallPhone(tester);
+    final env = await createTestEnv(
+      secrets: FakeSecretStore.withCredentials(testCredentials(1)),
+    );
+    env.api.submitResult = SubmitResult.accepted(
+      id: 'id-1',
+      score: 900,
+      rank: 0,
+      playerId: testPlayerId(1),
+    );
+
+    await tester.pumpWidget(wrapApp(env, const SoloScreen()));
+    await tester.tap(find.text('TAP TO START').last);
+    for (var i = 0; i < 6000 && env.api.submitCalls == 0; i++) {
+      await tester.pump(const Duration(milliseconds: 16));
+    }
+    await pumpFrames(tester, 12);
+
+    expect(
+      find.text('Saved — sign in to appear on the world board'),
+      findsOneWidget,
+    );
+    await tester.pumpWidget(const SizedBox());
+  });
 }
