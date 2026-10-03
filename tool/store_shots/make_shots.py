@@ -1,10 +1,11 @@
 """App Store screenshots: each game screenshot in an iPhone frame under a headline.
 
-    python3 tool/store_shots/make_shots.py <folder with the 5 PNGs> [out folder]
+    python3 tool/store_shots/make_shots.py <folder with the 5 PNGs> [out folder] [WxH]
 
 The PNGs are taken in name order (IMG_0259 … IMG_0264). Output is 1320x2868,
 the 6.9" iPhone size App Store Connect asks for, one set in Polish and one
-in English.
+in English. Pass 1284x2778 (or 1242x2688) for the 6.5" slot; everything is
+laid out in proportion to the width.
 """
 import sys
 from pathlib import Path
@@ -12,6 +13,11 @@ from pathlib import Path
 from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
 W, H = 1320, 2868
+
+
+def px(v):
+    """A length designed at 1320 wide, at the current width."""
+    return round(v * W / 1320)
 FONT = "/System/Library/Fonts/SFNS.ttf"
 
 # In the order the screens should appear in the store, keyed by source file
@@ -44,7 +50,7 @@ def background(accent):
     glow = Image.new("RGBA", (W, H), (0, 0, 0, 0))
     d = ImageDraw.Draw(glow)
     d.ellipse((W * 0.10, H * 0.28, W * 0.90, H * 0.80), fill=accent + (60,))
-    glow = glow.filter(ImageFilter.GaussianBlur(240))
+    glow = glow.filter(ImageFilter.GaussianBlur(px(240)))
     img.paste(glow, (0, 0), glow)
     return img
 
@@ -53,7 +59,7 @@ def phone(shot, screen_w):
     """An iPhone-like frame: titanium edge, black bezel, Dynamic Island."""
     ratio = shot.height / shot.width
     screen_h = round(screen_w * ratio)
-    bezel, edge = 26, 8
+    bezel, edge = px(26), px(8)
     pw, ph = screen_w + 2 * (bezel + edge), screen_h + 2 * (bezel + edge)
     r_out = round(screen_w * 0.165)
     frame = Image.new("RGBA", (pw, ph), (0, 0, 0, 0))
@@ -81,17 +87,18 @@ def phone(shot, screen_w):
 def compose(shot, headline, accent):
     img = background(accent)
     d = ImageDraw.Draw(img)
-    f = font(112, 800)
-    d.multiline_text((W / 2, 310), headline, font=f, fill=(244, 246, 252),
-                     anchor="mm", align="center", spacing=18)
-    frame = phone(shot, 960)
-    shadow = Image.new("RGBA", (frame.width + 200, frame.height + 200), (0, 0, 0, 0))
+    f = font(px(112), 800)
+    d.multiline_text((W / 2, px(310)), headline, font=f, fill=(244, 246, 252),
+                     anchor="mm", align="center", spacing=px(18))
+    frame = phone(shot, px(960))
+    m = px(100)
+    shadow = Image.new("RGBA", (frame.width + 2 * m, frame.height + 2 * m), (0, 0, 0, 0))
     ImageDraw.Draw(shadow).rounded_rectangle(
-        (100, 120, frame.width + 100, frame.height + 100), 160, fill=(0, 0, 0, 170))
-    shadow = shadow.filter(ImageFilter.GaussianBlur(50))
+        (m, m + px(20), frame.width + m, frame.height + m), px(160), fill=(0, 0, 0, 170))
+    shadow = shadow.filter(ImageFilter.GaussianBlur(px(50)))
     x = (W - frame.width) // 2
-    y = 580
-    img.paste(shadow, (x - 100, y - 100), shadow)
+    y = px(580)
+    img.paste(shadow, (x - m, y - m), shadow)
     img.paste(frame, (x, y), frame)
     return img
 
@@ -99,6 +106,9 @@ def compose(shot, headline, accent):
 def main():
     src = Path(sys.argv[1])
     out = Path(sys.argv[2]) if len(sys.argv) > 2 else Path("build/store_shots")
+    if len(sys.argv) > 3:
+        global W, H
+        W, H = (int(v) for v in sys.argv[3].lower().split("x"))
     files = sorted(p for p in src.iterdir() if p.suffix.lower() in (".png", ".jpg", ".jpeg"))
     if len(files) < 5:
         sys.exit(f"need 5 screenshots in {src}, found {len(files)}")
